@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head> 
+    <meta charset="UTF-8">
+    <title>橋式健身系統</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background-color: #f4f4f4; }
+        .container { margin-top: 50px; }
+        .record-section { width: 80%; margin: 20px auto; background: white; padding: 20px; border-radius: 10px; display: none; }
+        .btn-primary { padding: 15px 40px; font-size: 20px; cursor: pointer; background-color: #4CAF50; color: white; border: none; border-radius: 5px;}
+        .btn-primary:hover { background-color: #45a049; }
+    </style>
+</head>
+<body>
+    <div style="text-align: right; padding: 10px;"> 
+        <span id="user_greeting" style="margin-right: 15px; font-weight: bold; color: #333;">訪客模式</span>
+        <button id="auth_btn">登入 / 註冊</button>
+        <button id="logout_btn" style="display: none;">登出</button>
+        <button id="show_record_btn" style="display: none;">查看我的紀錄</button>
+    </div>
+
+    <div id="main_content" style="text-align: center; margin-top: 100px;">
+        <h1>橋式健身輔助系統</h1>
+        <!-- <p style="color: #666; margin-bottom: 30px;">訪客也可直接體驗！登入後將為您解鎖紀錄功能</p> -->
+        
+        <button id="start_btn" class="btn-primary">開始運動</button>
+
+        <div id="record_display_area" class="record-section">
+            <h3>最近 7 次運動紀錄</h3>
+            <div style="margin-bottom: 20px; background: #f9f9f9; padding: 10px; border-radius: 8px; display: inline-block;">
+                <label for="duration_filter" style="font-weight: bold;">篩選運動模式：</label>
+                <select id="duration_filter" onchange="updateFilteredChart()" style="padding: 5px 10px; cursor: pointer;">
+                    <option value="all">顯示全部模式</option>
+                    <option value="60">1 分鐘模式</option>
+                    <option value="180">3 分鐘模式</option>
+                    <option value="300">5 分鐘模式</option>
+                    <option value="600">10 分鐘模式</option>
+                </select>
+            </div>
+            <canvas id="myRecordChart"></canvas>
+            <br>
+            <button onclick="document.getElementById('record_display_area').style.display='none'">關閉圖表</button>
+        </div>
+    </div>
+
+    <div id="auth_page" style="display: none; text-align: center; margin-top: 50px;">
+        <h2>帳號管理</h2>
+        <div id="auth_choice">
+            <button onclick="showRegisterForm()">我要註冊</button>
+            <button onclick="showLoginForm()">我要登入</button>
+        </div>
+        <div id="form_container" style="margin-top: 20px;"></div>
+        <br><br>
+        <button id="back_home_btn">返回主頁</button>
+    </div>
+
+    <script>
+        let rawChartData = null; // 用來存放從資料庫抓回來的原始資料
+        // 紀錄全域變數
+        let currentUser = "";  
+        let recordChart = null; 
+        let pendingRecord = null; // 這就是訪客的「暫存口袋」
+
+        const startBtn = document.getElementById('start_btn');
+        const showRecordBtn = document.getElementById('show_record_btn');
+        const userGreeting = document.getElementById('user_greeting');
+
+        // --- 核心：開始運動 ---
+        startBtn.onclick = function() {
+            startBtn.innerText = "視訊啟動中...";
+            startBtn.disabled = true;
+
+            fetch('/open_app', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: currentUser })
+            })
+            .then(res => res.json())
+            .then(data => {
+                startBtn.innerText = "開始運動";
+                startBtn.disabled = false;
+                
+                let count = data.correct_count;
+                let duration = data.duration;
+
+                // ✅ 守門員機制：如果做 0 下，直接結束，什麼都不存！
+                if (count === 0) {
+                    alert("您這次沒有完成任何橋式動作，因此不予紀錄喔！下次繼續加油！💪");
+                    return; // 直接中斷
+                }
+
+                // 🌟 以下是有確實做運動的狀況：
+                if (currentUser === "") {
+                    // 訪客模式：把成績放進口袋
+                    pendingRecord = { duration: duration, count: count };
+                    alert(`運動結束！您做了 ${count} 次，共 ${duration} 秒。\n💡 小提示：現在登入或註冊，系統會自動為您存檔喔！`);
+                } else {
+                    // 已登入模式：直接秀出成績跟圖表
+                    alert(`運動結束！成績已為您自動存檔 (${count} 次 / ${duration} 秒)。`);
+                    document.getElementById('record_display_area').style.display = 'block';
+                    loadWeeklyChart(currentUser); 
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert("系統發生錯誤或您已手動關閉視窗。");
+                startBtn.innerText = "開始運動";
+                startBtn.disabled = false;
+            });
+        };
+
+        // --- 登入與註冊介面切換 ---
+        const authBtn = document.getElementById('auth_btn');
+        const mainContent = document.getElementById('main_content');
+        const authPage = document.getElementById('auth_page');
+        const backHomeBtn = document.getElementById('back_home_btn');
+
+        authBtn.onclick = function() {
+            mainContent.style.display = 'none';
+            authPage.style.display = 'block';    
+        }
+        backHomeBtn.onclick = function() {
+            authPage.style.display = 'none';    
+            mainContent.style.display = 'block'; 
+        }
+
+        const formContainer = document.getElementById('form_container');
+
+        function showRegisterForm() {
+            formContainer.innerHTML = `
+                <div style="background: white; padding: 20px; border: 1px solid #ddd; border-radius: 10px; display: inline-block;">
+                    <h3>會員註冊</h3>
+                    <input type="text" id="reg_user" placeholder="請輸入帳號"><br><br>
+                    <input type="password" id="reg_pass" placeholder="請輸入密碼"><br><br>
+                    <button onclick="handleRegister()" style="padding: 5px 15px;">完成註冊</button>
+                </div>
+            `;
+        }
+
+        function showLoginForm() {
+            formContainer.innerHTML = `
+                <div style="background: white; padding: 20px; border: 1px solid #ddd; border-radius: 10px; display: inline-block;">
+                    <h3>會員登入</h3>
+                    <input type="text" id="login_user" placeholder="帳號"><br><br>
+                    <input type="password" id="login_pass" placeholder="密碼"><br><br>
+                    <button onclick="handleLogin()" style="padding: 5px 15px;">登入</button>
+                </div>
+            `;
+        }
+
+        function handleRegister() {
+            const u = document.getElementById('reg_user').value;
+            const p = document.getElementById('reg_pass').value;
+            if (u === "" || p === "") { alert("不能留白喔！"); return; }
+
+            fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: u, password: p })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === "success") {
+                    alert(data.message);
+                    showLoginForm();
+                } else {
+                    alert("註冊失敗：" + data.message);
+                }
+            });
+        }
+
+        function handleLogin() {
+            const u = document.getElementById('login_user').value;
+            const p = document.getElementById('login_pass').value;
+            if (u === "" || p === "") { alert("請輸入帳號和密碼！"); return; }
+
+            fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: u, password: p })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === "success") {
+                    currentUser = u;
+                    authBtn.style.display = 'none'; 
+                    logoutBtn.style.display = 'inline-block'; // 顯示登出按鈕
+                    userGreeting.innerText = "你好，" + u; 
+                    showRecordBtn.style.display = 'inline-block'; 
+                    
+                    authPage.style.display = 'none';
+                    mainContent.style.display = 'block';
+
+                    // 檢查有沒有還沒存檔的成績
+                    if (pendingRecord !== null) {
+                        fetch('/save_record', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                username: currentUser,
+                                correct: pendingRecord.count,
+                                error: 0,
+                                duration: pendingRecord.duration
+                            })
+                        }).then(res => res.json()).then(saveData => {
+                            alert(`登入成功！已將您稍早的運動紀錄 (${pendingRecord.count}次) 自動存檔！`);
+                            pendingRecord = null; // 存完就把口袋清空
+                            document.getElementById('record_display_area').style.display = 'block';
+                            loadWeeklyChart(currentUser);
+                        });
+                    } else {
+                        // 如果口袋沒東西，就正常登入看圖表
+                        alert(data.message);
+                        loadWeeklyChart(currentUser);
+                    }
+                } else {
+                    alert(data.message);
+                }
+            });
+        }
+
+        // --- 查看圖表與畫圖功能 ---
+        showRecordBtn.onclick = function() {
+            document.getElementById('record_display_area').style.display = 'block';
+            loadWeeklyChart(currentUser);
+        };
+
+        // function loadWeeklyChart(username) {
+        //     fetch(`/get_weekly_stats/${username}`)
+        //         .then(res => res.json())
+        //         .then(data => {
+        //             const canvas = document.getElementById('myRecordChart');
+        //             if (!canvas) return;
+        //             const ctx = canvas.getContext('2d');
+        //             if (recordChart) { recordChart.destroy(); }
+                    
+        //             recordChart = new Chart(ctx, {
+        //                 type: 'bar',
+        //                 data: {
+        //                     labels: data.labels,
+        //                     datasets: [{
+        //                         label: '正確次數',
+        //                         data: data.corrects, 
+        //                         backgroundColor: 'rgba(32, 185, 28, 0.5)', 
+        //                         borderColor: 'rgba(54, 162, 235, 1)',
+        //                         borderWidth: 1,
+        //                         maxBarThickness: 50,  // 設定條棒最粗就只有 50 像素
+        //                         barPercentage: 0.5    // 讓條棒佔據可用空間的比例小一點
+        //                     }]
+        //                 },
+        //                 options: { scales: { y: { beginAtZero: true } } }
+        //             });
+        //         });
+        // }
+
+        function loadWeeklyChart(username) {
+            fetch(`/get_weekly_stats/${username}`)
+                .then(res => res.json())
+                .then(data => {
+                    rawChartData = data;    // 1. 把資料存到全域變數
+                    updateFilteredChart();  // 2. 呼叫畫圖/篩選函式
+                });
+        }
+        function updateFilteredChart() {
+            if (!rawChartData) return; // 安全檢查
+
+            const filterValue = document.getElementById('duration_filter').value;
+            const canvas = document.getElementById('myRecordChart');
+            const ctx = canvas.getContext('2d');
+
+            let displayLabels = [];
+            let displayCorrects = [];
+            let displayDurations = [];
+
+            // 🕵️‍♂️ 開始篩選：符合時間才放進去畫
+            rawChartData.durations.forEach((d, index) => {
+                if (filterValue === "all" || d === parseInt(filterValue)) {
+                    displayLabels.push(rawChartData.labels[index]);
+                    displayCorrects.push(rawChartData.corrects[index]);
+                    displayDurations.push(rawChartData.durations[index]);
+                }
+            });
+
+            // 📊 畫出圖表
+            if (recordChart) { recordChart.destroy(); }
+            recordChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: displayLabels,
+                    datasets: [{
+                        label: '正確次數',
+                        data: displayCorrects,
+                        backgroundColor: 'rgba(32, 185, 28, 0.5)',
+                        borderColor: 'rgba(32, 185, 28, 1)',
+                        borderWidth: 1,
+                        maxBarThickness: 50,
+                        barPercentage: 0.5
+                    }]
+                },
+                options: {
+                    scales: { y: { beginAtZero: true } },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                // 🌟 這裡讓它在滑鼠移上去時顯示時間
+                                label: function(context) {
+                                    let dur = displayDurations[context.dataIndex];
+                                    let m = Math.floor(dur / 60);
+                                    let s = dur % 60;
+                                    return ` 正確次數: ${context.parsed.y} 次 (${m}分${s}秒)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        // 登出功能
+        const logoutBtn = document.getElementById('logout_btn');
+
+        logoutBtn.onclick = function() {
+            // 1. 清空使用者狀態
+            currentUser = "";
+            pendingRecord = null; // 登出也順便清空暫存口袋
+    
+            // 2. UI 恢復成訪客模式
+            userGreeting.innerText = "訪客模式";
+            authBtn.style.display = 'inline-block'; // 登入按鈕回來
+            logoutBtn.style.display = 'none';       // 登出按鈕消失
+            showRecordBtn.style.display = 'none';   // 查看紀錄消失
+            startBtn.style.display = 'inline-block'; // 開始按鈕維持顯示(讓訪客也能玩)
+    
+            // 3. 隱藏並清空圖表
+            document.getElementById('record_display_area').style.display = 'none';
+            if (recordChart) {
+                recordChart.destroy();
+                recordChart = null;
+            }
+
+    alert("您已成功登出！");
+};
+    </script>
+</body>
+</html>
