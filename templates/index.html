@@ -1,16 +1,17 @@
 <!DOCTYPE html>
 <html>
-<head> 
+<head>
     <meta charset="UTF-8">
     <title>橋式健身系統</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background-color: #f4f4f4; }
-        .container { margin-top: 50px; }
-        .record-section { width: 80%; margin: 20px auto; background: white; padding: 20px; border-radius: 10px; display: none; }
         .btn-primary { padding: 15px 40px; font-size: 20px; cursor: pointer; background-color: #4CAF50; color: white; border: none; border-radius: 5px;}
         .btn-primary:hover { background-color: #45a049; }
-        .all-records-section { width: 90%; max-width: 800px; margin: 20px auto; background: white; padding: 20px; border-radius: 10px; display: none; }
+
+        .records-page { width: 90%; max-width: 900px; margin: 20px auto; display: none; }
+        .chart-section { background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .table-section { background: white; padding: 20px; border-radius: 10px; }
         .records-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         .records-table th, .records-table td { padding: 10px 12px; border-bottom: 1px solid #eee; text-align: center; }
         .records-table th { background-color: #4CAF50; color: white; position: sticky; top: 0; }
@@ -21,61 +22,62 @@
         .pagination button.active { background: #4CAF50; color: white; border-color: #4CAF50; }
         .pagination button:disabled { opacity: 0.4; cursor: default; }
         .records-summary { color: #666; margin-bottom: 10px; }
+        .filter-bar { margin-bottom: 15px; background: #f9f9f9; padding: 10px; border-radius: 8px; display: inline-block; }
+        .filter-bar label { font-weight: bold; margin-right: 5px; }
+        .filter-bar select { padding: 5px 10px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div style="text-align: right; padding: 10px;"> 
+    <div style="text-align: right; padding: 10px;">
         <span id="user_greeting" style="margin-right: 15px; font-weight: bold; color: #333;">訪客模式</span>
         <button id="auth_btn">登入 / 註冊</button>
         <button id="logout_btn" style="display: none;">登出</button>
-        <button id="show_record_btn" style="display: none;">查看我的紀錄</button>
         <button id="show_all_records_btn" style="display: none;">查看所有紀錄</button>
     </div>
 
     <div id="main_content" style="text-align: center; margin-top: 100px;">
         <h1>橋式健身輔助系統</h1>
-        <!-- <p style="color: #666; margin-bottom: 30px;">訪客也可直接體驗！登入後將為您解鎖紀錄功能</p> -->
-        
         <button id="start_btn" class="btn-primary">開始運動</button>
-
-        <div id="record_display_area" class="record-section">
-            <h3>最近 7 次運動紀錄</h3>
-            <div style="margin-bottom: 20px; background: #f9f9f9; padding: 10px; border-radius: 8px; display: inline-block;">
-                <label for="duration_filter" style="font-weight: bold;">篩選運動模式：</label>
-                <select id="duration_filter" onchange="updateFilteredChart()" style="padding: 5px 10px; cursor: pointer;">
-                    <option value="all">顯示全部模式</option>
-                    <option value="60">1 分鐘模式</option>
-                    <option value="180">3 分鐘模式</option>
-                    <option value="300">5 分鐘模式</option>
-                    <option value="600">10 分鐘模式</option>
-                </select>
-            </div>
-            <canvas id="myRecordChart"></canvas>
-            <br>
-            <button onclick="document.getElementById('record_display_area').style.display='none'">關閉圖表</button>
-        </div>
     </div>
 
-    <div id="all_records_page" class="all-records-section">
-        <h2>所有運動紀錄</h2>
-        <div class="records-summary" id="records_summary"></div>
-        <div style="max-height: 500px; overflow-y: auto;">
-            <table class="records-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>日期時間</th>
-                        <th>正確次數</th>
-                        <th>錯誤次數</th>
-                        <th>運動時長</th>
-                    </tr>
-                </thead>
-                <tbody id="records_tbody"></tbody>
-            </table>
+    <!-- 合併後的紀錄頁面：上方圖表 + 下方列表 -->
+    <div id="records_page" class="records-page">
+        <div class="chart-section">
+            <h3>每日運動紀錄圖表</h3>
+            <div class="filter-bar">
+                <label for="days_filter">顯示天數：</label>
+                <select id="days_filter" onchange="loadDailyChart()">
+                    <option value="7" selected>最近 7 天</option>
+                    <option value="14">最近 14 天</option>
+                    <option value="30">最近 30 天</option>
+                    <option value="60">最近 60 天</option>
+                    <option value="90">最近 90 天</option>
+                </select>
+            </div>
+            <canvas id="dailyChart"></canvas>
         </div>
-        <div class="pagination" id="pagination_controls"></div>
+
+        <div class="table-section">
+            <h3>所有運動紀錄</h3>
+            <div class="records-summary" id="records_summary"></div>
+            <div style="max-height: 500px; overflow-y: auto;">
+                <table class="records-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>日期時間</th>
+                            <th>正確次數</th>
+                            <th>錯誤次數</th>
+                            <th>運動時長</th>
+                        </tr>
+                    </thead>
+                    <tbody id="records_tbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pagination_controls"></div>
+        </div>
         <br>
-        <button onclick="closeAllRecords()">返回主頁</button>
+        <button onclick="closeRecordsPage()">返回主頁</button>
     </div>
 
     <div id="auth_page" style="display: none; text-align: center; margin-top: 50px;">
@@ -90,15 +92,32 @@
     </div>
 
     <script>
-        let rawChartData = null; // 用來存放從資料庫抓回來的原始資料
-        // 紀錄全域變數
-        let currentUser = "";  
-        let recordChart = null; 
-        let pendingRecord = null; // 這就是訪客的「暫存口袋」
+        let currentUser = "";
+        let dailyChartInstance = null;
+        let pendingRecord = null;
 
         const startBtn = document.getElementById('start_btn');
-        const showRecordBtn = document.getElementById('show_record_btn');
         const userGreeting = document.getElementById('user_greeting');
+        const showAllRecordsBtn = document.getElementById('show_all_records_btn');
+        const recordsPage = document.getElementById('records_page');
+        const mainContent = document.getElementById('main_content');
+        const authBtn = document.getElementById('auth_btn');
+        const authPage = document.getElementById('auth_page');
+        const backHomeBtn = document.getElementById('back_home_btn');
+        const logoutBtn = document.getElementById('logout_btn');
+        const formContainer = document.getElementById('form_container');
+
+        // 每次運動後用的顏色池（堆疊用）
+        const sessionColors = [
+            'rgba(32, 185, 28, 0.7)',
+            'rgba(54, 162, 235, 0.7)',
+            'rgba(255, 159, 64, 0.7)',
+            'rgba(153, 102, 255, 0.7)',
+            'rgba(255, 99, 132, 0.7)',
+            'rgba(255, 205, 86, 0.7)',
+            'rgba(75, 192, 192, 0.7)',
+            'rgba(201, 203, 207, 0.7)',
+        ];
 
         // --- 核心：開始運動 ---
         startBtn.onclick = function() {
@@ -114,26 +133,21 @@
             .then(data => {
                 startBtn.innerText = "開始運動";
                 startBtn.disabled = false;
-                
+
                 let count = data.correct_count;
                 let duration = data.duration;
 
-                // ✅ 守門員機制：如果做 0 下，直接結束，什麼都不存！
                 if (count === 0) {
-                    alert("您這次沒有完成任何橋式動作，因此不予紀錄喔！下次繼續加油！💪");
-                    return; // 直接中斷
+                    alert("您這次沒有完成任何橋式動作，因此不予紀錄喔！下次繼續加油！");
+                    return;
                 }
 
-                // 🌟 以下是有確實做運動的狀況：
                 if (currentUser === "") {
-                    // 訪客模式：把成績放進口袋
                     pendingRecord = { duration: duration, count: count };
-                    alert(`運動結束！您做了 ${count} 次，共 ${duration} 秒。\n💡 小提示：現在登入或註冊，系統會自動為您存檔喔！`);
+                    alert(`運動結束！您做了 ${count} 次，共 ${duration} 秒。\n小提示：現在登入或註冊，系統會自動為您存檔喔！`);
                 } else {
-                    // 已登入模式：直接秀出成績跟圖表
                     alert(`運動結束！成績已為您自動存檔 (${count} 次 / ${duration} 秒)。`);
-                    document.getElementById('record_display_area').style.display = 'block';
-                    loadWeeklyChart(currentUser); 
+                    openRecordsPage();
                 }
             })
             .catch(err => {
@@ -144,22 +158,152 @@
             });
         };
 
-        // --- 登入與註冊介面切換 ---
-        const authBtn = document.getElementById('auth_btn');
-        const mainContent = document.getElementById('main_content');
-        const authPage = document.getElementById('auth_page');
-        const backHomeBtn = document.getElementById('back_home_btn');
+        // --- 紀錄頁面開關 ---
+        showAllRecordsBtn.onclick = function() {
+            openRecordsPage();
+        };
 
+        function openRecordsPage() {
+            mainContent.style.display = 'none';
+            recordsPage.style.display = 'block';
+            loadDailyChart();
+            loadAllRecords(1);
+        }
+
+        function closeRecordsPage() {
+            recordsPage.style.display = 'none';
+            mainContent.style.display = 'block';
+        }
+
+        // --- 每日堆疊圖表 ---
+        function loadDailyChart() {
+            const days = document.getElementById('days_filter').value;
+            fetch(`/get_daily_stats/${currentUser}?days=${days}`)
+                .then(res => res.json())
+                .then(data => {
+                    drawStackedChart(data.dates, data.sessions);
+                });
+        }
+
+        function drawStackedChart(dates, sessions) {
+            const canvas = document.getElementById('dailyChart');
+            const ctx = canvas.getContext('2d');
+            if (dailyChartInstance) { dailyChartInstance.destroy(); }
+
+            // 找出單日最多幾次運動（決定要幾個 dataset）
+            let maxSessions = 0;
+            sessions.forEach(s => { if (s.length > maxSessions) maxSessions = s.length; });
+            // 至少保留 1 個 dataset，讓空日顯示 0
+            if (maxSessions === 0) maxSessions = 1;
+
+            // 建立 datasets：每個 dataset 是「第 N 次運動」
+            const datasets = [];
+            for (let i = 0; i < maxSessions; i++) {
+                const color = sessionColors[i % sessionColors.length];
+                datasets.push({
+                    label: `第 ${i + 1} 次運動`,
+                    data: sessions.map(dayArr => (dayArr[i] ? dayArr[i].correct : 0)),
+                    backgroundColor: color,
+                    borderColor: color.replace('0.7', '1'),
+                    borderWidth: 1,
+                    maxBarThickness: 40,
+                });
+            }
+
+            dailyChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: dates, datasets: datasets },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { stacked: true },
+                        y: { stacked: true, beginAtZero: true, title: { display: true, text: '正確次數' } }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const idx = context.datasetIndex;
+                                    const dayIdx = context.dataIndex;
+                                    const session = sessions[dayIdx][idx];
+                                    if (!session) return '';
+                                    const m = Math.floor(session.duration / 60);
+                                    const s = session.duration % 60;
+                                    return `第 ${idx + 1} 次：${session.correct} 次 (${m}分${s}秒)`;
+                                }
+                            }
+                        },
+                        legend: {
+                            display: maxSessions > 1
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- 所有紀錄列表（分頁） ---
+        function loadAllRecords(page) {
+            fetch(`/get_all_records/${currentUser}?page=${page}&per_page=20`)
+                .then(res => res.json())
+                .then(data => {
+                    const tbody = document.getElementById('records_tbody');
+                    const summary = document.getElementById('records_summary');
+                    const pagination = document.getElementById('pagination_controls');
+
+                    summary.innerText = `共 ${data.total} 筆紀錄（第 ${data.page} / ${data.total_pages} 頁）`;
+
+                    tbody.innerHTML = '';
+                    const startNum = (data.page - 1) * data.per_page;
+                    data.records.forEach((r, i) => {
+                        const m = Math.floor(r.duration_seconds / 60);
+                        const s = r.duration_seconds % 60;
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${startNum + i + 1}</td>
+                            <td>${r.timestamp}</td>
+                            <td>${r.correct_count}</td>
+                            <td>${r.error_count}</td>
+                            <td>${m}分${s}秒</td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+
+                    pagination.innerHTML = '';
+                    const prevBtn = document.createElement('button');
+                    prevBtn.innerText = '上一頁';
+                    prevBtn.disabled = data.page <= 1;
+                    prevBtn.onclick = () => loadAllRecords(data.page - 1);
+                    pagination.appendChild(prevBtn);
+
+                    let startPage = Math.max(1, data.page - 2);
+                    let endPage = Math.min(data.total_pages, startPage + 4);
+                    if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
+
+                    for (let p = startPage; p <= endPage; p++) {
+                        const btn = document.createElement('button');
+                        btn.innerText = p;
+                        if (p === data.page) btn.classList.add('active');
+                        btn.onclick = () => loadAllRecords(p);
+                        pagination.appendChild(btn);
+                    }
+
+                    const nextBtn = document.createElement('button');
+                    nextBtn.innerText = '下一頁';
+                    nextBtn.disabled = data.page >= data.total_pages;
+                    nextBtn.onclick = () => loadAllRecords(data.page + 1);
+                    pagination.appendChild(nextBtn);
+                });
+        }
+
+        // --- 登入與註冊 ---
         authBtn.onclick = function() {
             mainContent.style.display = 'none';
-            authPage.style.display = 'block';    
+            authPage.style.display = 'block';
         }
         backHomeBtn.onclick = function() {
-            authPage.style.display = 'none';    
-            mainContent.style.display = 'block'; 
+            authPage.style.display = 'none';
+            mainContent.style.display = 'block';
         }
-
-        const formContainer = document.getElementById('form_container');
 
         function showRegisterForm() {
             formContainer.innerHTML = `
@@ -218,16 +362,14 @@
             .then(data => {
                 if (data.status === "success") {
                     currentUser = u;
-                    authBtn.style.display = 'none'; 
-                    logoutBtn.style.display = 'inline-block'; // 顯示登出按鈕
-                    userGreeting.innerText = "你好，" + u; 
-                    showRecordBtn.style.display = 'inline-block';
+                    authBtn.style.display = 'none';
+                    logoutBtn.style.display = 'inline-block';
+                    userGreeting.innerText = "你好，" + u;
                     showAllRecordsBtn.style.display = 'inline-block';
 
                     authPage.style.display = 'none';
                     mainContent.style.display = 'block';
 
-                    // 檢查有沒有還沒存檔的成績
                     if (pendingRecord !== null) {
                         fetch('/save_record', {
                             method: 'POST',
@@ -240,12 +382,10 @@
                             })
                         }).then(res => res.json()).then(saveData => {
                             alert(`登入成功！已將您稍早的運動紀錄 (${pendingRecord.count}次) 自動存檔！`);
-                            pendingRecord = null; // 存完就把口袋清空
-                            document.getElementById('record_display_area').style.display = 'block';
-                            loadWeeklyChart(currentUser);
+                            pendingRecord = null;
+                            openRecordsPage();
                         });
                     } else {
-                        // 如果口袋沒東西，就正常登入
                         alert(data.message);
                     }
                 } else {
@@ -254,200 +394,25 @@
             });
         }
 
-        // --- 查看圖表與畫圖功能 ---
-        showRecordBtn.onclick = function() {
-            document.getElementById('record_display_area').style.display = 'block';
-            loadWeeklyChart(currentUser);
-        };
-
-        // function loadWeeklyChart(username) {
-        //     fetch(`/get_weekly_stats/${username}`)
-        //         .then(res => res.json())
-        //         .then(data => {
-        //             const canvas = document.getElementById('myRecordChart');
-        //             if (!canvas) return;
-        //             const ctx = canvas.getContext('2d');
-        //             if (recordChart) { recordChart.destroy(); }
-                    
-        //             recordChart = new Chart(ctx, {
-        //                 type: 'bar',
-        //                 data: {
-        //                     labels: data.labels,
-        //                     datasets: [{
-        //                         label: '正確次數',
-        //                         data: data.corrects, 
-        //                         backgroundColor: 'rgba(32, 185, 28, 0.5)', 
-        //                         borderColor: 'rgba(54, 162, 235, 1)',
-        //                         borderWidth: 1,
-        //                         maxBarThickness: 50,  // 設定條棒最粗就只有 50 像素
-        //                         barPercentage: 0.5    // 讓條棒佔據可用空間的比例小一點
-        //                     }]
-        //                 },
-        //                 options: { scales: { y: { beginAtZero: true } } }
-        //             });
-        //         });
-        // }
-
-        function loadWeeklyChart(username) {
-            fetch(`/get_weekly_stats/${username}`)
-                .then(res => res.json())
-                .then(data => {
-                    rawChartData = data;    // 1. 把資料存到全域變數
-                    updateFilteredChart();  // 2. 呼叫畫圖/篩選函式
-                });
-        }
-        function updateFilteredChart() {
-            if (!rawChartData) return; // 安全檢查
-
-            const filterValue = document.getElementById('duration_filter').value;
-            const canvas = document.getElementById('myRecordChart');
-            const ctx = canvas.getContext('2d');
-
-            let displayLabels = [];
-            let displayCorrects = [];
-            let displayDurations = [];
-
-            // 🕵️‍♂️ 開始篩選：符合時間才放進去畫
-            rawChartData.durations.forEach((d, index) => {
-                if (filterValue === "all" || d === parseInt(filterValue)) {
-                    displayLabels.push(rawChartData.labels[index]);
-                    displayCorrects.push(rawChartData.corrects[index]);
-                    displayDurations.push(rawChartData.durations[index]);
-                }
-            });
-
-            // 📊 畫出圖表
-            if (recordChart) { recordChart.destroy(); }
-            recordChart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: displayLabels,
-                    datasets: [{
-                        label: '正確次數',
-                        data: displayCorrects,
-                        backgroundColor: 'rgba(32, 185, 28, 0.5)',
-                        borderColor: 'rgba(32, 185, 28, 1)',
-                        borderWidth: 1,
-                        maxBarThickness: 50,
-                        barPercentage: 0.5
-                    }]
-                },
-                options: {
-                    scales: { y: { beginAtZero: true } },
-                    plugins: {
-                        tooltip: {
-                            callbacks: {
-                                // 🌟 這裡讓它在滑鼠移上去時顯示時間
-                                label: function(context) {
-                                    let dur = displayDurations[context.dataIndex];
-                                    let m = Math.floor(dur / 60);
-                                    let s = dur % 60;
-                                    return ` 正確次數: ${context.parsed.y} 次 (${m}分${s}秒)`;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-        // --- 查看所有紀錄功能 ---
-        const showAllRecordsBtn = document.getElementById('show_all_records_btn');
-        const allRecordsPage = document.getElementById('all_records_page');
-
-        showAllRecordsBtn.onclick = function() {
-            mainContent.style.display = 'none';
-            allRecordsPage.style.display = 'block';
-            loadAllRecords(1);
-        };
-
-        function closeAllRecords() {
-            allRecordsPage.style.display = 'none';
-            mainContent.style.display = 'block';
-        }
-
-        function loadAllRecords(page) {
-            fetch(`/get_all_records/${currentUser}?page=${page}&per_page=20`)
-                .then(res => res.json())
-                .then(data => {
-                    const tbody = document.getElementById('records_tbody');
-                    const summary = document.getElementById('records_summary');
-                    const pagination = document.getElementById('pagination_controls');
-
-                    // 顯示總筆數
-                    summary.innerText = `共 ${data.total} 筆紀錄（第 ${data.page} / ${data.total_pages} 頁）`;
-
-                    // 填入表格
-                    tbody.innerHTML = '';
-                    const startNum = (data.page - 1) * data.per_page;
-                    data.records.forEach((r, i) => {
-                        const m = Math.floor(r.duration_seconds / 60);
-                        const s = r.duration_seconds % 60;
-                        const tr = document.createElement('tr');
-                        tr.innerHTML = `
-                            <td>${startNum + i + 1}</td>
-                            <td>${r.timestamp}</td>
-                            <td>${r.correct_count}</td>
-                            <td>${r.error_count}</td>
-                            <td>${m}分${s}秒</td>
-                        `;
-                        tbody.appendChild(tr);
-                    });
-
-                    // 分頁按鈕
-                    pagination.innerHTML = '';
-                    const prevBtn = document.createElement('button');
-                    prevBtn.innerText = '上一頁';
-                    prevBtn.disabled = data.page <= 1;
-                    prevBtn.onclick = () => loadAllRecords(data.page - 1);
-                    pagination.appendChild(prevBtn);
-
-                    // 頁碼按鈕（最多顯示 5 個）
-                    let startPage = Math.max(1, data.page - 2);
-                    let endPage = Math.min(data.total_pages, startPage + 4);
-                    if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
-
-                    for (let p = startPage; p <= endPage; p++) {
-                        const btn = document.createElement('button');
-                        btn.innerText = p;
-                        if (p === data.page) btn.classList.add('active');
-                        btn.onclick = () => loadAllRecords(p);
-                        pagination.appendChild(btn);
-                    }
-
-                    const nextBtn = document.createElement('button');
-                    nextBtn.innerText = '下一頁';
-                    nextBtn.disabled = data.page >= data.total_pages;
-                    nextBtn.onclick = () => loadAllRecords(data.page + 1);
-                    pagination.appendChild(nextBtn);
-                });
-        }
-
-        // 登出功能
-        const logoutBtn = document.getElementById('logout_btn');
-
+        // --- 登出功能 ---
         logoutBtn.onclick = function() {
-            // 1. 清空使用者狀態
             currentUser = "";
-            pendingRecord = null; // 登出也順便清空暫存口袋
-    
-            // 2. UI 恢復成訪客模式
+            pendingRecord = null;
+
             userGreeting.innerText = "訪客模式";
-            authBtn.style.display = 'inline-block'; // 登入按鈕回來
-            logoutBtn.style.display = 'none';       // 登出按鈕消失
-            showRecordBtn.style.display = 'none';   // 查看紀錄消失
-            showAllRecordsBtn.style.display = 'none'; // 查看所有紀錄消失
-            allRecordsPage.style.display = 'none';    // 隱藏所有紀錄頁面
-            startBtn.style.display = 'inline-block'; // 開始按鈕維持顯示(讓訪客也能玩)
-    
-            // 3. 隱藏並清空圖表
-            document.getElementById('record_display_area').style.display = 'none';
-            if (recordChart) {
-                recordChart.destroy();
-                recordChart = null;
+            authBtn.style.display = 'inline-block';
+            logoutBtn.style.display = 'none';
+            showAllRecordsBtn.style.display = 'none';
+            recordsPage.style.display = 'none';
+            mainContent.style.display = 'block';
+
+            if (dailyChartInstance) {
+                dailyChartInstance.destroy();
+                dailyChartInstance = null;
             }
 
-    alert("您已成功登出！");
-};
+            alert("您已成功登出！");
+        };
     </script>
 </body>
 </html>

@@ -172,35 +172,45 @@ async def save_record(request: Request):
     
     return {"status": "error", "message": "無效資料或未登入"}
 
-# 週紀錄統計功能 長條圖
+# --- N 日統計功能 (每日分次堆疊) ---
+@app.get("/get_daily_stats/{username}")
+async def get_daily_stats(username: str, days: int = 7):
+    from datetime import datetime, timedelta
 
-@app.get("/get_weekly_stats/{username}")
-async def get_weekly_stats(username: str):
     conn = sqlite3.connect('users.db', timeout=5)
     cursor = conn.cursor()
-    
-    # 抓取該使用者最近 7 次的運動日期、次數、時間
+
+    # 計算起始日期
+    today = datetime.now().date()
+    start_date = today - timedelta(days=days - 1)
+
+    # 抓取該區間內所有紀錄
     cursor.execute("""
-        SELECT strftime('%m-%d', timestamp) as day, 
-               correct_count, error_count, duration_seconds
-        FROM records 
-        WHERE username = ? 
-        ORDER BY timestamp DESC 
-        LIMIT 7
-    """, (username,))
-    
+        SELECT date(timestamp) as day, correct_count, duration_seconds
+        FROM records
+        WHERE username = ? AND date(timestamp) >= ?
+        ORDER BY timestamp ASC
+    """, (username, start_date.isoformat()))
+
     rows = cursor.fetchall()
     conn.close()
-    
-    # 資料反轉 日期由遠到近排列
-    reversed_rows = rows[::-1]
-    
-    labels = [r[0] for r in reversed_rows]    # 日期 (月-日)
-    corrects = [r[1] for r in reversed_rows]  # 正確次數
-    errors = [r[2] for r in reversed_rows]    # 錯誤次數 
-    durations = [r[3] for r in reversed_rows] # 運動秒數 
-    
-    return {"labels": labels, "corrects": corrects, "errors": errors, "durations": durations}
+
+    # 按日期分組：每天有一個 list 存放各次運動的 correct_count
+    from collections import OrderedDict
+    daily = OrderedDict()
+    for i in range(days):
+        d = start_date + timedelta(days=i)
+        daily[d.strftime('%m/%d')] = []
+
+    for day_str, correct, duration in rows:
+        label = datetime.strptime(day_str, '%Y-%m-%d').strftime('%m/%d')
+        if label in daily:
+            daily[label].append({"correct": correct, "duration": duration})
+
+    dates = list(daily.keys())
+    sessions = list(daily.values())
+
+    return {"dates": dates, "sessions": sessions}
 
 # --- 查看所有歷史紀錄 (分頁) ---
 @app.get("/get_all_records/{username}")
