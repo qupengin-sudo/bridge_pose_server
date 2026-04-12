@@ -36,7 +36,7 @@
 </head>
 <body>
     <div style="text-align: right; padding: 10px;">
-        <span id="user_greeting" style="margin-right: 15px; font-weight: bold; color: #333;">訪客模式</span>
+        <span id="user_greeting" style="margin-right: 15px; font-weight: bold; color: #333;">訪客</span>
         <button id="auth_btn">登入 / 註冊</button>
         <button id="logout_btn" style="display: none;">登出</button>
         <button id="show_all_records_btn" style="display: none;">查看所有紀錄</button>
@@ -479,7 +479,7 @@
             currentUser = "";
             pendingRecord = null;
 
-            userGreeting.innerText = "訪客模式";
+            userGreeting.innerText = "訪客";
             authBtn.style.display = 'inline-block';
             logoutBtn.style.display = 'none';
             showAllRecordsBtn.style.display = 'none';

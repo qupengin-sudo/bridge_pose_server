@@ -4,10 +4,21 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import time
+import json
+import os
 from enum import Enum, auto
 import tkinter as tk
 from tkinter import font as tkfont
-DEVICE_ID=2
+
+# ── Load config ───────────────────────────────────────────────────────────────
+_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+with open(_config_path, "r") as _f:
+    CONFIG = json.load(_f)
+
+DEVICE_ID      = CONFIG["DEVICE_ID"]
+STAGE1_MIN     = CONFIG["STAGE1_MIN"]
+STAGE1_MAX     = CONFIG["STAGE1_MAX"]
+STAGE2_MAX     = CONFIG["STAGE2_MAX"]
 
 # ── Primary monitor detection ─────────────────────────────────────────────────
 def get_primary_monitor():
@@ -28,9 +39,10 @@ def get_primary_monitor():
 
 # ── States ────────────────────────────────────────────────────────────────────
 class State(Enum):
-    INIT   = auto()   # waiting for first bridge pose
-    STAGE1 = auto()   # in bridge pose  (hips lifted, angle 140–180°)
-    STAGE2 = auto()   # resting between reps
+    INIT       = auto()   # waiting for first bridge pose
+    STAGE1     = auto()   # in bridge pose  (hips lifted, angle 140–180°)
+    TRANSITION = auto()   # mid-stage (hips partially raised, angle 100–139°)
+    STAGE2     = auto()   # resting between reps (angle < 100°)
 
 
 # ── Angle helper ───────────────────────────────────────────────────────────────
@@ -44,29 +56,26 @@ def calculate_angle(a, b, c):
 
 
 # ── Bridge-pose detection ──────────────────────────────────────────────────────
-#   Primary criterion: knee-hip-shoulder angle must be 140–180°
-#   (hips fully lifted off the ground)
-BRIDGE_MIN = 140
-BRIDGE_MAX = 180
-
-
 def detect_bridge(shoulder, hip, knee, ankle):
     """
-    Returns (in_bridge, a_khs, a_fkh, a_kfs).
-    in_bridge is True when the knee-hip-shoulder angle is in [140, 180].
+    Returns (in_bridge, in_transition, a_khs, a_fkh, a_kfs).
+    in_bridge:     knee-hip-shoulder angle in [BRIDGE_MIN, BRIDGE_MAX]  (140–180°)
+    in_transition: angle in [TRANSITION_MIN, TRANSITION_MAX]            (100–139°)
     """
     a_khs = calculate_angle(knee,  hip,   shoulder)   # main bridge angle
     a_fkh = calculate_angle(ankle, knee,  hip)         # leg bend reference
     a_kfs = calculate_angle(knee,  ankle, shoulder)    # foot-reference
-    in_bridge = BRIDGE_MIN <= a_khs <= BRIDGE_MAX
-    return in_bridge, a_khs, a_fkh, a_kfs
+    in_bridge     = STAGE1_MIN <= a_khs <= STAGE1_MAX
+    in_transition = STAGE2_MAX < a_khs < STAGE1_MIN
+    return in_bridge, in_transition, a_khs, a_fkh, a_kfs
 
 
 # ── Colour per state ──────────────────────────────────────────────────────────
 STATE_COLOR = {
-    State.INIT:   (200, 200, 200),   # grey
-    State.STAGE1: (0,   255,   0),   # green  – in pose
-    State.STAGE2: (0,   165, 255),   # orange – resting
+    State.INIT:       (200, 200, 200),   # grey
+    State.STAGE1:     (0,   255,   0),   # green  – full bridge
+    State.TRANSITION: (0,     0, 255),   # red    – mid-stage
+    State.STAGE2:     (0,   165, 255),   # orange – resting
 }
 
 
@@ -105,30 +114,44 @@ def ask_duration():
 
     title_font  = tkfont.Font(family="Helvetica", size=16, weight="bold")
     sub_font    = tkfont.Font(family="Helvetica", size=11)
-    btn_font    = tkfont.Font(family="Helvetica", size=18, weight="bold")
+    spin_font   = tkfont.Font(family="Helvetica", size=24, weight="bold")
+    unit_font   = tkfont.Font(family="Helvetica", size=14)
+    btn_font    = tkfont.Font(family="Helvetica", size=14, weight="bold")
     label_font  = tkfont.Font(family="Helvetica", size=9)
 
     # ── Title ─────────────────────────────────────────────────────────────────
     tk.Label(root, text="🧘 橋式訓練計時器", font=title_font,
              bg=BG, fg=TITLE_FG, pady=14).pack()
-    tk.Label(root, text="請選擇訓練時間 / Choose session duration",
+    tk.Label(root, text="請選擇訓練時間",
              font=sub_font, bg=BG, fg=BTN_FG).pack(pady=(0, 16))
 
-    btn_frame = tk.Frame(root, bg=BG)
-    btn_frame.pack(padx=30, pady=(0, 8))
+    # ── Minutes & Seconds spinboxes ───────────────────────────────────────────
+    spin_frame = tk.Frame(root, bg=BG)
+    spin_frame.pack(padx=30, pady=(0, 12))
 
-    OPTIONS = [
-        ("1 min",  1 * 60),
-        ("3 min",  3 * 60),
-        ("5 min",  5 * 60),
-        ("10 min", 10 * 60),
-    ]
+    min_var = tk.IntVar(value=1)
+    sec_var = tk.IntVar(value=0)
 
-    def make_handler(secs):
-        def handler():
-            chosen[0] = secs
+    min_spin = tk.Spinbox(spin_frame, from_=0, to=59, textvariable=min_var,
+                          font=spin_font, width=3, justify="center",
+                          bg=BTN_BG, fg=ACCENT, buttonbackground=BTN_BG,
+                          insertbackground=ACCENT, selectbackground=BTN_HOV)
+    min_spin.pack(side="left", padx=(0, 4))
+    tk.Label(spin_frame, text="分", font=unit_font, bg=BG, fg=BTN_FG).pack(side="left", padx=(0, 16))
+
+    sec_spin = tk.Spinbox(spin_frame, from_=0, to=50, increment=10, textvariable=sec_var,
+                          font=spin_font, width=3, justify="center",
+                          bg=BTN_BG, fg=ACCENT, buttonbackground=BTN_BG,
+                          insertbackground=ACCENT, selectbackground=BTN_HOV)
+    sec_spin.pack(side="left", padx=(0, 4))
+    tk.Label(spin_frame, text="秒", font=unit_font, bg=BG, fg=BTN_FG).pack(side="left")
+
+    # ── Start button ──────────────────────────────────────────────────────────
+    def on_start():
+        total = min_var.get() * 60 + sec_var.get()
+        if total > 0:
+            chosen[0] = total
             root.destroy()
-        return handler
 
     def on_enter(btn):
         btn.configure(bg=BTN_HOV)
@@ -136,28 +159,18 @@ def ask_duration():
     def on_leave(btn):
         btn.configure(bg=BTN_BG)
 
-    for label, secs in OPTIONS:
-        b = tk.Button(
-            btn_frame,
-            text=label,
-            font=btn_font,
-            width=6,
-            bg=BTN_BG,
-            fg=ACCENT,
-            activebackground=BTN_HOV,
-            activeforeground=ACCENT,
-            relief="flat",
-            bd=0,
-            padx=10,
-            pady=12,
-            cursor="hand2",
-            command=make_handler(secs),
-        )
-        b.pack(side="left", padx=8, pady=4)
-        b.bind("<Enter>", lambda e, btn=b: on_enter(btn))
-        b.bind("<Leave>", lambda e, btn=b: on_leave(btn))
+    start_btn = tk.Button(
+        root, text="開始訓練", font=btn_font,
+        bg=BTN_BG, fg=ACCENT,
+        activebackground=BTN_HOV, activeforeground=ACCENT,
+        relief="flat", bd=0, padx=24, pady=10,
+        cursor="hand2", command=on_start,
+    )
+    start_btn.pack(pady=(4, 8))
+    start_btn.bind("<Enter>", lambda e: on_enter(start_btn))
+    start_btn.bind("<Leave>", lambda e: on_leave(start_btn))
 
-    tk.Label(root, text="計時從第一個橋式動作開始 / Timer starts on your first rep",
+    tk.Label(root, text="計時從第一個橋式動作開始",
              font=label_font, bg=BG, fg="#6c7086", pady=10).pack()
 
     # ── Size & center ─────────────────────────────────────────────────────────
@@ -247,15 +260,78 @@ def open_bridge_app():
         close_btn.bind("<Enter>", on_enter)
         close_btn.bind("<Leave>", on_leave)
 
-        # ── Center on screen ──────────────────────────────────────────────────────
+        # ── Center on primary monitor ────────────────────────────────────────────
+        root.withdraw()
+        primary = get_primary_monitor()
+        if primary:
+            pmx, pmy, sw, sh = primary
+        else:
+            pmx, pmy = 0, 0
+            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         root.update_idletasks()
-        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         ww = root.winfo_reqwidth()
         wh = root.winfo_reqheight()
-        root.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+{(sh - wh) // 2}")
+        cx = pmx + (sw - ww) // 2
+        cy = pmy + (sh - wh) // 2
+        root.geometry(f"{ww}x{wh}+{cx}+{cy}")
+        root.deiconify()
 
         root.mainloop()
 
+    # ── Error dialog (count == 0) ─────────────────────────────────────────────────
+    def show_error_dialog():
+        root = tk.Tk()
+        root.title("提示")
+        root.resizable(False, False)
+
+        BG       = "#1e1e2e"
+        ACCENT   = "#89b4fa"
+        BTN_BG   = "#313244"
+        BTN_HOV  = "#45475a"
+        TITLE_FG = "#f38ba8"   # red/pink
+        TEXT_FG  = "#cdd6f4"
+
+        root.configure(bg=BG)
+
+        title_font = tkfont.Font(family="Helvetica", size=16, weight="bold")
+        msg_font   = tkfont.Font(family="Helvetica", size=12)
+        btn_font   = tkfont.Font(family="Helvetica", size=14, weight="bold")
+
+        tk.Label(root, text="⚠️ 訓練未完成", font=title_font,
+                 bg=BG, fg=TITLE_FG, pady=16).pack()
+        tk.Label(root, text="系統發生錯誤或您已手動關閉視窗。", font=msg_font,
+                 bg=BG, fg=TEXT_FG, padx=30, pady=(0, 20)).pack()
+
+        def on_enter(e): close_btn.configure(bg=BTN_HOV)
+        def on_leave(e): close_btn.configure(bg=BTN_BG)
+
+        close_btn = tk.Button(
+            root, text="確定", font=btn_font,
+            bg=BTN_BG, fg=ACCENT,
+            activebackground=BTN_HOV, activeforeground=ACCENT,
+            relief="flat", bd=0, padx=24, pady=10,
+            cursor="hand2", command=root.destroy,
+        )
+        close_btn.pack(pady=(0, 20))
+        close_btn.bind("<Enter>", on_enter)
+        close_btn.bind("<Leave>", on_leave)
+
+        root.withdraw()
+        primary = get_primary_monitor()
+        if primary:
+            pmx, pmy, sw, sh = primary
+        else:
+            pmx, pmy = 0, 0
+            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.update_idletasks()
+        ww = root.winfo_reqwidth()
+        wh = root.winfo_reqheight()
+        cx = pmx + (sw - ww) // 2
+        cy = pmy + (sh - wh) // 2
+        root.geometry(f"{ww}x{wh}+{cx}+{cy}")
+        root.deiconify()
+
+        root.mainloop()
 
     # ── MediaPipe setup ────────────────────────────────────────────────────────────
     MODEL_PATH = "pose_landmarker_lite.task"
@@ -348,9 +424,9 @@ def open_bridge_app():
         # ── Pose evaluation ────────────────────────────────────────────────────────
         if points:
             shoulder, hip, knee, ankle = points
-            in_bridge, a_khs, a_fkh, a_kfs = detect_bridge(shoulder, hip, knee, ankle)
+            in_bridge, in_transition, a_khs, a_fkh, a_kfs = detect_bridge(shoulder, hip, knee, ankle)
         else:
-            in_bridge, a_khs, a_fkh, a_kfs = False, 0.0, 0.0, 0.0
+            in_bridge, in_transition, a_khs, a_fkh, a_kfs = False, False, 0.0, 0.0, 0.0
 
         # ── Countdown check ────────────────────────────────────────────────────────
         if timer_started and not finished:
@@ -362,24 +438,30 @@ def open_bridge_app():
         if not finished:
             if state == State.INIT:
                 if in_bridge:
-                    # First rep detected
-                    state        = State.STAGE1
-                    bridge_count += 1
-                    # Start the 1-minute countdown
+                    state = State.STAGE1
                     if not timer_started:
                         timer_started    = True
                         timer_start_time = now
 
             elif state == State.STAGE1:
-                # User lowered hips → rest phase
-                if not in_bridge:
-                    state = State.STAGE2
+                if in_transition:
+                    state = State.TRANSITION
+                elif not in_bridge and not in_transition:
+                    state        = State.STAGE2
+                    bridge_count += 1
+
+            elif state == State.TRANSITION:
+                if in_bridge:
+                    state = State.STAGE1
+                elif not in_transition:
+                    state        = State.STAGE2
+                    bridge_count += 1
 
             elif state == State.STAGE2:
-                # User lifted hips again → new rep
-                if in_bridge:
-                    state        = State.STAGE1
-                    bridge_count += 1
+                if in_transition:
+                    state = State.TRANSITION
+                elif in_bridge:
+                    state = State.STAGE1
 
         color = STATE_COLOR[state]
 
@@ -473,6 +555,9 @@ def open_bridge_app():
         cv2.putText(mini, f"Count: {bridge_count}",
                     (6, 46),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)   # cyan, bold
+        cv2.putText(mini, f"KHS: {int(a_khs)}",
+                    (6, 68),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         # ── MIDDLE SECTION: Pose sketch ────────────────────────────────────────────
         if points:
@@ -588,15 +673,21 @@ def open_bridge_app():
 
         # Check if user pressed 'q' OR closed the window via the X button
         key = cv2.waitKey(1) & 0xFF
-        window_closed = cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1
+        try:
+            window_closed = cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1
+        except cv2.error:
+            window_closed = True
         if key == ord('q') or window_closed:
-            # Record actual elapsed time, not the full countdown
             if timer_started:
                 actual_secs = int(time.time() - timer_start_time)
             else:
                 actual_secs = 0
             cap.release()
             cv2.destroyAllWindows()
+            if bridge_count > 0:
+                show_result_dialog(bridge_count, actual_secs)
+            else:
+                show_error_dialog()
             return actual_secs, bridge_count
 
 # 測試
