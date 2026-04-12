@@ -340,7 +340,7 @@
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${startNum + i + 1}</td>
-                    <td>${r.timestamp}</td>
+                    <td>${new Date(r.timestamp + 'Z').toLocaleString()}</td>
                     <td>${r.correct_count}</td>
                     <td>${r.error_count}</td>
                     <td>${m}分${s}秒</td>
