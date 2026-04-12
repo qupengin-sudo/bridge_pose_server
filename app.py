@@ -21,7 +21,7 @@ templates = Jinja2Templates(directory="templates")
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     # 叫 Jinja2 去 templates 資料夾找 "index.html" 呈現出來
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(name="index.html", request=request)
 
 # --- 註冊功能 ---
 
