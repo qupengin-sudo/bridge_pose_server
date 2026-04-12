@@ -193,6 +193,7 @@ async def save_record(request: Request):
 @app.get("/get_daily_stats/{username}")
 async def get_daily_stats(username: str, days: int = 7):
     from datetime import datetime, timedelta
+    days = max(1, min(50, days))
 
     conn = sqlite3.connect('users.db', timeout=5)
     cursor = conn.cursor()
@@ -272,6 +273,58 @@ async def get_all_records(username: str, page: int = 1, per_page: int = 20):
         "per_page": per_page,
         "total_pages": total_pages
     }
+
+# --- 搜尋紀錄 (日期區間 + 運動時長篩選) ---
+@app.get("/search_records/{username}")
+async def search_records(username: str, date_from: str = "", date_to: str = "",
+                         duration_op: str = "", duration_val: int = 0,
+                         page: int = 1, per_page: int = 20):
+    import math
+    conn = sqlite3.connect('users.db', timeout=5)
+    cursor = conn.cursor()
+
+    conditions = ["username = ?"]
+    params = [username]
+
+    if date_from:
+        conditions.append("date(timestamp) >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("date(timestamp) <= ?")
+        params.append(date_to)
+    if duration_op and duration_val > 0:
+        if duration_op == "eq":
+            conditions.append("duration_seconds = ?")
+        elif duration_op == "lte":
+            conditions.append("duration_seconds <= ?")
+        elif duration_op == "gte":
+            conditions.append("duration_seconds >= ?")
+        else:
+            conditions.append("duration_seconds = ?")
+        params.append(duration_val)
+
+    where = " AND ".join(conditions)
+
+    cursor.execute(f"SELECT COUNT(*) FROM records WHERE {where}", params)
+    total = cursor.fetchone()[0]
+
+    offset = (page - 1) * per_page
+    cursor.execute(f"""
+        SELECT id, correct_count, error_count, duration_seconds, timestamp
+        FROM records WHERE {where}
+        ORDER BY timestamp DESC
+        LIMIT ? OFFSET ?
+    """, params + [per_page, offset])
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    records = [{"id": r[0], "correct_count": r[1], "error_count": r[2],
+                "duration_seconds": r[3], "timestamp": r[4]} for r in rows]
+    total_pages = math.ceil(total / per_page) if total > 0 else 1
+
+    return {"records": records, "total": total, "page": page,
+            "per_page": per_page, "total_pages": total_pages}
 
 if __name__ == "__main__":
     import uvicorn

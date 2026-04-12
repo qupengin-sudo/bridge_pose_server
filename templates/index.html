@@ -24,7 +24,14 @@
         .records-summary { color: #666; margin-bottom: 10px; }
         .filter-bar { margin-bottom: 15px; background: #f9f9f9; padding: 10px; border-radius: 8px; display: inline-block; }
         .filter-bar label { font-weight: bold; margin-right: 5px; }
-        .filter-bar select { padding: 5px 10px; cursor: pointer; }
+        .filter-bar select, .filter-bar input { padding: 5px 10px; cursor: pointer; }
+        .search-bar { background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: center; }
+        .search-bar label { font-weight: bold; font-size: 14px; }
+        .search-bar input, .search-bar select { padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; }
+        .search-bar button { padding: 6px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .search-bar button:hover { background: #45a049; }
+        .search-bar .reset-btn { background: #888; }
+        .search-bar .reset-btn:hover { background: #666; }
     </style>
 </head>
 <body>
@@ -46,19 +53,33 @@
             <h3>每日運動紀錄圖表</h3>
             <div class="filter-bar">
                 <label for="days_filter">顯示天數：</label>
-                <select id="days_filter" onchange="loadDailyChart()">
-                    <option value="7" selected>最近 7 天</option>
-                    <option value="14">最近 14 天</option>
-                    <option value="30">最近 30 天</option>
-                    <option value="60">最近 60 天</option>
-                    <option value="90">最近 90 天</option>
-                </select>
+                <input type="number" id="days_filter" value="7" min="1" max="50" style="width: 60px;" oninput="onDaysChanged()">
+                <span style="color: #999; font-size: 12px; margin-left: 5px;">(1~50 天)</span>
             </div>
             <canvas id="dailyChart"></canvas>
         </div>
 
         <div class="table-section">
             <h3>所有運動紀錄</h3>
+            <div class="search-bar">
+                <label>日期範圍：</label>
+                <input type="date" id="search_date_from">
+                <span>~</span>
+                <input type="date" id="search_date_to">
+
+                <label>運動時長：</label>
+                <select id="search_duration_op">
+                    <option value="">不限</option>
+                    <option value="eq">等於</option>
+                    <option value="lte">小於等於</option>
+                    <option value="gte">大於等於</option>
+                </select>
+                <input type="number" id="search_duration_val" value="" min="1" placeholder="分鐘" style="width: 60px;">
+                <span style="font-size: 13px; color: #666;">分鐘</span>
+
+                <button onclick="searchRecords(1)">搜尋</button>
+                <button class="reset-btn" onclick="resetSearch()">重置</button>
+            </div>
             <div class="records-summary" id="records_summary"></div>
             <div style="max-height: 500px; overflow-y: auto;">
                 <table class="records-table">
@@ -191,9 +212,19 @@
             mainContent.style.display = 'block';
         }
 
+        // --- 天數輸入自動更新（防抖） ---
+        let daysTimer = null;
+        function onDaysChanged() {
+            clearTimeout(daysTimer);
+            daysTimer = setTimeout(() => loadDailyChart(), 400);
+        }
+
         // --- 每日堆疊圖表 ---
         function loadDailyChart() {
-            const days = document.getElementById('days_filter').value;
+            let days = parseInt(document.getElementById('days_filter').value) || 7;
+            if (days < 1) days = 1;
+            if (days > 50) days = 50;
+            document.getElementById('days_filter').value = days;
             fetch(`/get_daily_stats/${currentUser}?days=${days}`)
                 .then(res => res.json())
                 .then(data => {
@@ -257,58 +288,90 @@
             });
         }
 
-        // --- 所有紀錄列表（分頁） ---
+        // --- 紀錄列表（分頁，支援搜尋） ---
+        let isSearchMode = false;
+
         function loadAllRecords(page) {
             fetch(`/get_all_records/${currentUser}?page=${page}&per_page=20`)
                 .then(res => res.json())
-                .then(data => {
-                    const tbody = document.getElementById('records_tbody');
-                    const summary = document.getElementById('records_summary');
-                    const pagination = document.getElementById('pagination_controls');
+                .then(data => renderRecordsTable(data, (p) => loadAllRecords(p)));
+        }
 
-                    summary.innerText = `共 ${data.total} 筆紀錄（第 ${data.page} / ${data.total_pages} 頁）`;
+        function searchRecords(page) {
+            const dateFrom = document.getElementById('search_date_from').value;
+            const dateTo = document.getElementById('search_date_to').value;
+            const durOp = document.getElementById('search_duration_op').value;
+            const durMinutes = parseInt(document.getElementById('search_duration_val').value) || 0;
 
-                    tbody.innerHTML = '';
-                    const startNum = (data.page - 1) * data.per_page;
-                    data.records.forEach((r, i) => {
-                        const m = Math.floor(r.duration_seconds / 60);
-                        const s = r.duration_seconds % 60;
-                        const tr = document.createElement('tr');
-                        tr.innerHTML = `
-                            <td>${startNum + i + 1}</td>
-                            <td>${r.timestamp}</td>
-                            <td>${r.correct_count}</td>
-                            <td>${r.error_count}</td>
-                            <td>${m}分${s}秒</td>
-                        `;
-                        tbody.appendChild(tr);
-                    });
+            let url = `/search_records/${currentUser}?page=${page}&per_page=20`;
+            if (dateFrom) url += `&date_from=${dateFrom}`;
+            if (dateTo) url += `&date_to=${dateTo}`;
+            if (durOp && durMinutes > 0) {
+                url += `&duration_op=${durOp}&duration_val=${durMinutes * 60}`;
+            }
 
-                    pagination.innerHTML = '';
-                    const prevBtn = document.createElement('button');
-                    prevBtn.innerText = '上一頁';
-                    prevBtn.disabled = data.page <= 1;
-                    prevBtn.onclick = () => loadAllRecords(data.page - 1);
-                    pagination.appendChild(prevBtn);
+            isSearchMode = true;
+            fetch(url)
+                .then(res => res.json())
+                .then(data => renderRecordsTable(data, (p) => searchRecords(p)));
+        }
 
-                    let startPage = Math.max(1, data.page - 2);
-                    let endPage = Math.min(data.total_pages, startPage + 4);
-                    if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
+        function resetSearch() {
+            document.getElementById('search_date_from').value = '';
+            document.getElementById('search_date_to').value = '';
+            document.getElementById('search_duration_op').value = '';
+            document.getElementById('search_duration_val').value = '';
+            isSearchMode = false;
+            loadAllRecords(1);
+        }
 
-                    for (let p = startPage; p <= endPage; p++) {
-                        const btn = document.createElement('button');
-                        btn.innerText = p;
-                        if (p === data.page) btn.classList.add('active');
-                        btn.onclick = () => loadAllRecords(p);
-                        pagination.appendChild(btn);
-                    }
+        function renderRecordsTable(data, pageCallback) {
+            const tbody = document.getElementById('records_tbody');
+            const summary = document.getElementById('records_summary');
+            const pagination = document.getElementById('pagination_controls');
 
-                    const nextBtn = document.createElement('button');
-                    nextBtn.innerText = '下一頁';
-                    nextBtn.disabled = data.page >= data.total_pages;
-                    nextBtn.onclick = () => loadAllRecords(data.page + 1);
-                    pagination.appendChild(nextBtn);
-                });
+            summary.innerText = `共 ${data.total} 筆紀錄（第 ${data.page} / ${data.total_pages} 頁）`;
+
+            tbody.innerHTML = '';
+            const startNum = (data.page - 1) * data.per_page;
+            data.records.forEach((r, i) => {
+                const m = Math.floor(r.duration_seconds / 60);
+                const s = r.duration_seconds % 60;
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${startNum + i + 1}</td>
+                    <td>${r.timestamp}</td>
+                    <td>${r.correct_count}</td>
+                    <td>${r.error_count}</td>
+                    <td>${m}分${s}秒</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            pagination.innerHTML = '';
+            const prevBtn = document.createElement('button');
+            prevBtn.innerText = '上一頁';
+            prevBtn.disabled = data.page <= 1;
+            prevBtn.onclick = () => pageCallback(data.page - 1);
+            pagination.appendChild(prevBtn);
+
+            let startPage = Math.max(1, data.page - 2);
+            let endPage = Math.min(data.total_pages, startPage + 4);
+            if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
+
+            for (let p = startPage; p <= endPage; p++) {
+                const btn = document.createElement('button');
+                btn.innerText = p;
+                if (p === data.page) btn.classList.add('active');
+                btn.onclick = () => pageCallback(p);
+                pagination.appendChild(btn);
+            }
+
+            const nextBtn = document.createElement('button');
+            nextBtn.innerText = '下一頁';
+            nextBtn.disabled = data.page >= data.total_pages;
+            nextBtn.onclick = () => pageCallback(data.page + 1);
+            pagination.appendChild(nextBtn);
         }
 
         // --- 登入與註冊 ---

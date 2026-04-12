@@ -262,6 +262,22 @@ def open_bridge_app():
     MINI_X, MINI_Y = 10,  10
 
 
+    # ── 設定視窗：可縮放、合理大小、置中 ────────────────────────────────────────
+    WINDOW_NAME = "Bridge Exercise"
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+
+    # 用 tkinter 取得螢幕解析度（已 import），再算出合理視窗大小
+    _tk_tmp = tk.Tk()
+    _tk_tmp.withdraw()
+    screen_w = _tk_tmp.winfo_screenwidth()
+    screen_h = _tk_tmp.winfo_screenheight()
+    _tk_tmp.destroy()
+
+    win_w = int(screen_w * 0.6)
+    win_h = int(screen_h * 0.7)
+    cv2.resizeWindow(WINDOW_NAME, win_w, win_h)
+    cv2.moveWindow(WINDOW_NAME, (screen_w - win_w) // 2, (screen_h - win_h) // 2)
+
     # ═════════════════════════════════════════════════════════════════════════════
     # Main loop
     # ═════════════════════════════════════════════════════════════════════════════
