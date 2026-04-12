@@ -1,7 +1,7 @@
 import sqlite3
 
 def init_all_tables():
-    conn = sqlite3.connect('users.db')
+    conn = sqlite3.connect('users.db', timeout=5)
     cursor = conn.cursor()
     
     # 1. 建立會員表 

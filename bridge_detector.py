@@ -7,7 +7,7 @@ import time
 from enum import Enum, auto
 import tkinter as tk
 from tkinter import font as tkfont
-
+DEVICE_ID=2
 # ── States ────────────────────────────────────────────────────────────────────
 class State(Enum):
     INIT   = auto()   # waiting for first bridge pose
@@ -245,7 +245,7 @@ def open_bridge_app():
     COUNTDOWN_SEC = ask_duration()   # returns 60 / 180 / 300 / 600
 
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(DEVICE_ID)
     print(f"程式啟動中… 訓練時間 {COUNTDOWN_SEC // 60} 分鐘，按 q 手動結束")
 
     # ── FSM / counter / timer state ────────────────────────────────────────────────
