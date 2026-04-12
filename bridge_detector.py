@@ -8,6 +8,24 @@ from enum import Enum, auto
 import tkinter as tk
 from tkinter import font as tkfont
 DEVICE_ID=2
+
+# ── Primary monitor detection ─────────────────────────────────────────────────
+def get_primary_monitor():
+    """Returns (x, y, w, h) of the primary monitor via xrandr. Falls back to full screen."""
+    import subprocess
+    try:
+        out = subprocess.run(['xrandr'], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if ' connected primary' in line:
+                # e.g. "HDMI-0 connected primary 3840x2160+1920+0 ..."
+                import re
+                m = re.search(r'(\d+)x(\d+)\+(\d+)\+(\d+)', line)
+                if m:
+                    return int(m.group(3)), int(m.group(4)), int(m.group(1)), int(m.group(2))
+    except Exception:
+        pass
+    return None
+
 # ── States ────────────────────────────────────────────────────────────────────
 class State(Enum):
     INIT   = auto()   # waiting for first bridge pose
@@ -53,10 +71,10 @@ STATE_COLOR = {
 
 
 # ── Duration picker dialog ────────────────────────────────────────────────────
-def ask_duration() -> int:
+def ask_duration():
     """
     Shows a modal dialog with 4 buttons: 1 / 3 / 5 / 10 minutes.
-    Returns the chosen duration in seconds.
+    Returns (duration_seconds, screen_width, screen_height).
     Closes the app if the user dismisses the window without choosing.
     """
     chosen = [None]   # mutable container so the inner callbacks can write to it
@@ -64,10 +82,16 @@ def ask_duration() -> int:
     root = tk.Tk()
     root.title("橋式訓練 / Bridge Exercise")
     root.resizable(False, False)
+    root.withdraw()  # hide until we calculate center position
 
-    # ── Center the window on screen ───────────────────────────────────────────
-    root.update_idletasks()
-    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    # Use primary monitor dimensions for centering
+    primary = get_primary_monitor()
+    if primary:
+        mon_x, mon_y, sw, sh = primary
+    else:
+        mon_x, mon_y = 0, 0
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    screen_size = (sw, sh)
 
     # ── Styles ────────────────────────────────────────────────────────────────
     BG       = "#1e1e2e"
@@ -138,8 +162,12 @@ def ask_duration() -> int:
 
     # ── Size & center ─────────────────────────────────────────────────────────
     root.update_idletasks()
-    ww, wh = root.winfo_width(), root.winfo_height()
-    root.geometry(f"+{(sw - ww) // 2}+{(sh - wh) // 2}")
+    ww = root.winfo_reqwidth()
+    wh = root.winfo_reqheight()
+    cx = mon_x + (sw - ww) // 2
+    cy = mon_y + (sh - wh) // 2
+    root.geometry(f"{ww}x{wh}+{cx}+{cy}")
+    root.deiconify()  # now show the window at the centered position
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)   # X button just closes
     root.mainloop()
@@ -148,7 +176,7 @@ def ask_duration() -> int:
         import sys
         sys.exit(0)   # user closed without picking — exit cleanly
 
-    return chosen[0]
+    return chosen[0], screen_size[0], screen_size[1], mon_x, mon_y
 
 def open_bridge_app():
     # ── Result dialog ─────────────────────────────────────────────────────────────
@@ -222,8 +250,9 @@ def open_bridge_app():
         # ── Center on screen ──────────────────────────────────────────────────────
         root.update_idletasks()
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        ww, wh = root.winfo_width(), root.winfo_height()
-        root.geometry(f"+{(sw - ww) // 2}+{(sh - wh) // 2}")
+        ww = root.winfo_reqwidth()
+        wh = root.winfo_reqheight()
+        root.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+{(sh - wh) // 2}")
 
         root.mainloop()
 
@@ -242,7 +271,7 @@ def open_bridge_app():
     landmarker = PoseLandmarker.create_from_options(options)
 
     # ── Ask user for session duration BEFORE opening camera ───────────────────────
-    COUNTDOWN_SEC = ask_duration()   # returns 60 / 180 / 300 / 600
+    COUNTDOWN_SEC, screen_w, screen_h, mon_ox, mon_oy = ask_duration()
 
 
     cap = cv2.VideoCapture(DEVICE_ID)
@@ -266,17 +295,25 @@ def open_bridge_app():
     WINDOW_NAME = "Bridge Exercise"
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
 
-    # 用 tkinter 取得螢幕解析度（已 import），再算出合理視窗大小
-    _tk_tmp = tk.Tk()
-    _tk_tmp.withdraw()
-    screen_w = _tk_tmp.winfo_screenwidth()
-    screen_h = _tk_tmp.winfo_screenheight()
-    _tk_tmp.destroy()
+    # 先讀一幀取得攝影機解析度，再按比例算出視窗大小
+    ret_tmp, frame_tmp = cap.read()
+    if ret_tmp:
+        cam_h, cam_w = frame_tmp.shape[:2]
+    else:
+        cam_w, cam_h = 640, 480  # fallback
 
-    win_w = int(screen_w * 0.6)
+    # 以螢幕 70% 高度為基準，按攝影機比例算寬度
     win_h = int(screen_h * 0.7)
+    win_w = int(win_h * cam_w / cam_h)
+    # 如果算出來太寬，改以螢幕 90% 寬度為基準
+    if win_w > int(screen_w * 0.9):
+        win_w = int(screen_w * 0.9)
+        win_h = int(win_w * cam_h / cam_w)
+
     cv2.resizeWindow(WINDOW_NAME, win_w, win_h)
-    cv2.moveWindow(WINDOW_NAME, (screen_w - win_w) // 2, (screen_h - win_h) // 2)
+    cx = mon_ox + (screen_w - win_w) // 2
+    cy = mon_oy + (screen_h - win_h) // 2
+    cv2.moveWindow(WINDOW_NAME, cx, cy)
 
     # ═════════════════════════════════════════════════════════════════════════════
     # Main loop
@@ -540,22 +577,27 @@ def open_bridge_app():
         # ── Paste mini window onto main frame ──────────────────────────────────────
         frame[MINI_Y:MINI_Y + MINI_H, MINI_X:MINI_X + MINI_W] = mini
 
-        cv2.imshow("Bridge Exercise", frame)
+        cv2.imshow(WINDOW_NAME, frame)
 
         # ── Exit conditions ────────────────────────────────────────────────────────
         if finished:
-            cv2.destroyAllWindows()
             cap.release()
+            cv2.destroyAllWindows()
             show_result_dialog(bridge_count, COUNTDOWN_SEC)
-            break
+            return COUNTDOWN_SEC, bridge_count
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-    
-    # ── Cleanup (if user pressed q before timer expired) ─────────────────────────
-    cap.release()
-    cv2.destroyAllWindows()
-    return COUNTDOWN_SEC, bridge_count
+        # Check if user pressed 'q' OR closed the window via the X button
+        key = cv2.waitKey(1) & 0xFF
+        window_closed = cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1
+        if key == ord('q') or window_closed:
+            # Record actual elapsed time, not the full countdown
+            if timer_started:
+                actual_secs = int(time.time() - timer_start_time)
+            else:
+                actual_secs = 0
+            cap.release()
+            cv2.destroyAllWindows()
+            return actual_secs, bridge_count
 
 # 測試
 # if __name__ == "__main__":
