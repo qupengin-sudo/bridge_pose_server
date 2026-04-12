@@ -107,6 +107,22 @@
         const logoutBtn = document.getElementById('logout_btn');
         const formContainer = document.getElementById('form_container');
 
+        // --- 頁面載入時檢查 cookie 自動登入 ---
+        function restoreSession() {
+            fetch('/me')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success' && data.username) {
+                        currentUser = data.username;
+                        authBtn.style.display = 'none';
+                        logoutBtn.style.display = 'inline-block';
+                        userGreeting.innerText = "你好，" + currentUser;
+                        showAllRecordsBtn.style.display = 'inline-block';
+                    }
+                });
+        }
+        restoreSession();
+
         // 每次運動後用的顏色池（堆疊用）
         const sessionColors = [
             'rgba(32, 185, 28, 0.7)',
@@ -396,6 +412,7 @@
 
         // --- 登出功能 ---
         logoutBtn.onclick = function() {
+            fetch('/logout', { method: 'POST' });
             currentUser = "";
             pendingRecord = null;
 

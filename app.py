@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from bridge_detector import open_bridge_app
 from init_record import init_all_tables
@@ -72,11 +72,28 @@ async def login(request: Request):
 
         # 4. 判斷結果
         if user:
-            return {"status": "success", "message": "登入成功！歡迎回來"}
+            response = JSONResponse({"status": "success", "message": "登入成功！歡迎回來"})
+            response.set_cookie(key="username", value=u_input, max_age=30*24*3600, httponly=False)
+            return response
         else:
             return {"status": "error", "message": "帳號或密碼錯誤，請再試一次"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+# --- 檢查登入狀態 (cookie) ---
+@app.get("/me")
+async def me(request: Request):
+    username = request.cookies.get("username", "")
+    if username:
+        return {"status": "success", "username": username}
+    return {"status": "guest", "username": ""}
+
+# --- 登出 (清除 cookie) ---
+@app.post("/logout")
+async def logout():
+    response = JSONResponse({"status": "success", "message": "已登出"})
+    response.delete_cookie(key="username")
+    return response
 
 # # --- 啟動橋式偵測與存檔 ---
 # @app.post("/open_app")
