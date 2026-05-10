@@ -158,6 +158,10 @@
 
         // --- 核心：開始運動 ---
         startBtn.onclick = function() {
+            if (currentUser === "") {
+                alert("還未登入，我們會先紀錄起來。等待您登入後會一次送出。");
+            }
+
             startBtn.innerText = "視訊啟動中...";
             startBtn.disabled = true;
 
@@ -172,18 +176,19 @@
                 startBtn.disabled = false;
 
                 let count = data.correct_count;
+                let wrong = data.error_count || 0;
                 let duration = data.duration;
 
-                if (count === 0) {
+                if (count === 0 && wrong === 0) {
                     alert("您這次沒有完成任何橋式動作，因此不予紀錄喔！下次繼續加油！");
                     return;
                 }
 
                 if (currentUser === "") {
-                    pendingRecord = { duration: duration, count: count };
-                    alert(`運動結束！您做了 ${count} 次，共 ${duration} 秒。\n小提示：現在登入或註冊，系統會自動為您存檔喔！`);
+                    pendingRecord = { duration: duration, count: count, wrong: wrong };
+                    alert(`運動結束！正確 ${count} 次，錯誤 ${wrong} 次，共 ${duration} 秒。\n小提示：現在登入或註冊，系統會自動為您存檔喔！`);
                 } else {
-                    alert(`運動結束！成績已為您自動存檔 (${count} 次 / ${duration} 秒)。`);
+                    alert(`運動結束！成績已為您自動存檔（正確 ${count} 次，錯誤 ${wrong} 次 / ${duration} 秒）。`);
                     openRecordsPage();
                 }
             })
@@ -237,25 +242,52 @@
             const ctx = canvas.getContext('2d');
             if (dailyChartInstance) { dailyChartInstance.destroy(); }
 
-            // 找出單日最多幾次運動（決定要幾個 dataset）
-            let maxSessions = 0;
-            sessions.forEach(s => { if (s.length > maxSessions) maxSessions = s.length; });
-            // 至少保留 1 個 dataset，讓空日顯示 0
-            if (maxSessions === 0) maxSessions = 1;
+            // Aggregate daily totals for correct, wrong, and success rate
+            const dailyCorrect = dates.map((_, i) =>
+                sessions[i].reduce((sum, s) => sum + (s.correct || 0), 0));
+            const dailyWrong = dates.map((_, i) =>
+                sessions[i].reduce((sum, s) => sum + (s.error || 0), 0));
+            const dailyRate = dates.map((_, i) => {
+                const total = dailyCorrect[i] + dailyWrong[i];
+                return total > 0 ? Math.round(dailyCorrect[i] / total * 100) : null;
+            });
 
-            // 建立 datasets：每個 dataset 是「第 N 次運動」
-            const datasets = [];
-            for (let i = 0; i < maxSessions; i++) {
-                const color = sessionColors[i % sessionColors.length];
-                datasets.push({
-                    label: `第 ${i + 1} 次運動`,
-                    data: sessions.map(dayArr => (dayArr[i] ? dayArr[i].correct : 0)),
-                    backgroundColor: color,
-                    borderColor: color.replace('0.7', '1'),
+            const datasets = [
+                {
+                    label: '正確次數',
+                    data: dailyCorrect,
+                    backgroundColor: 'rgba(32, 185, 28, 0.7)',
+                    borderColor: 'rgba(32, 185, 28, 1)',
                     borderWidth: 1,
                     maxBarThickness: 40,
-                });
-            }
+                    stack: 'counts',
+                    yAxisID: 'y',
+                },
+                {
+                    label: '錯誤次數',
+                    data: dailyWrong,
+                    backgroundColor: 'rgba(255, 99, 132, 0.7)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 1,
+                    maxBarThickness: 40,
+                    stack: 'counts',
+                    yAxisID: 'y',
+                },
+                {
+                    label: '成功率 (%)',
+                    data: dailyRate,
+                    type: 'line',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    borderWidth: 2,
+                    pointRadius: 4,
+                    pointBackgroundColor: 'rgba(54, 162, 235, 1)',
+                    fill: false,
+                    tension: 0.3,
+                    spanGaps: true,
+                    yAxisID: 'yRate',
+                }
+            ];
 
             dailyChartInstance = new Chart(ctx, {
                 type: 'bar',
@@ -264,25 +296,33 @@
                     responsive: true,
                     scales: {
                         x: { stacked: true },
-                        y: { stacked: true, beginAtZero: true, title: { display: true, text: '正確次數' } }
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            position: 'left',
+                            title: { display: true, text: '次數' }
+                        },
+                        yRate: {
+                            beginAtZero: true,
+                            max: 100,
+                            position: 'right',
+                            title: { display: true, text: '成功率 (%)' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { callback: v => v + '%' }
+                        }
                     },
                     plugins: {
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
-                                    const idx = context.datasetIndex;
-                                    const dayIdx = context.dataIndex;
-                                    const session = sessions[dayIdx][idx];
-                                    if (!session) return '';
-                                    const m = Math.floor(session.duration / 60);
-                                    const s = session.duration % 60;
-                                    return `第 ${idx + 1} 次：${session.correct} 次 (${m}分${s}秒)`;
+                                    const dsLabel = context.dataset.label;
+                                    const val = context.parsed.y;
+                                    if (dsLabel === '成功率 (%)') return val !== null ? `成功率：${val}%` : '';
+                                    return `${dsLabel}：${val}`;
                                 }
                             }
                         },
-                        legend: {
-                            display: maxSessions > 1
-                        }
+                        legend: { display: true }
                     }
                 }
             });
@@ -456,11 +496,11 @@
                             body: JSON.stringify({
                                 username: currentUser,
                                 correct: pendingRecord.count,
-                                error: 0,
+                                error: pendingRecord.wrong || 0,
                                 duration: pendingRecord.duration
                             })
                         }).then(res => res.json()).then(saveData => {
-                            alert(`登入成功！已將您稍早的運動紀錄 (${pendingRecord.count}次) 自動存檔！`);
+                            alert(`登入成功！已將您稍早的運動紀錄 (正確${pendingRecord.count}次，錯誤${pendingRecord.wrong || 0}次) 自動存檔！`);
                             pendingRecord = null;
                             openRecordsPage();
                         });

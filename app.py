@@ -145,27 +145,21 @@ async def open_app(request: Request):
     data = await request.json()
     u = data.get("username", "") 
 
-    # 2. 呼叫大廚：開啟鏡頭、彈出計時選單 (程式會在這裡等你運動完)
-    # open_bridge_app 預計會回傳 (總秒數, 正確次數)
-    countdown, bridge_count = open_bridge_app()
-    
-    # ✅ 守門員機制：只有在「有登入(u不為空)」且「有做運動(count>0)」才直接存檔
-    if u and bridge_count > 0:
+    countdown, bridge_count, wrong_count = open_bridge_app()
+
+    if u and (bridge_count > 0 or wrong_count > 0):
         conn = sqlite3.connect('users.db', timeout=5)
         cursor = conn.cursor()
-        # 將數據插入到 records 資料表
-        cursor.execute("INSERT INTO records (username, correct_count, error_count, duration_seconds) VALUES (?, ?, ?, ?)", 
-                       (u, bridge_count, 0, countdown))
+        cursor.execute("INSERT INTO records (username, correct_count, error_count, duration_seconds) VALUES (?, ?, ?, ?)",
+                       (u, bridge_count, wrong_count, countdown))
         conn.commit()
         conn.close()
-        print(f"系統：已為使用者 {u} 自動存檔紀錄。")
-    
-    # ✅ 重要：不管有沒有存入資料庫，都要把成績傳回給網頁
-    # 這樣訪客才能在登入後，靠網頁把這兩組數字傳給 /save_record
+
     return {
-        "status": "success", 
-        "duration": countdown, 
-        "correct_count": bridge_count
+        "status": "success",
+        "duration": countdown,
+        "correct_count": bridge_count,
+        "error_count": wrong_count
     }
 
 # --- 儲存運動紀錄功能 (用於訪客登入後的「補存檔」) ---
@@ -177,8 +171,7 @@ async def save_record(request: Request):
     e = data.get("error")
     d = data.get("duration") 
     
-    # ✅ 守門員機制：確認次數大於 0 才允許補存
-    if u and c > 0:
+    if u and (c > 0 or e > 0):
         conn = sqlite3.connect('users.db', timeout=5)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO records (username, correct_count, error_count, duration_seconds) VALUES (?, ?, ?, ?)", 
@@ -204,7 +197,7 @@ async def get_daily_stats(username: str, days: int = 7):
 
     # 抓取該區間內所有紀錄
     cursor.execute("""
-        SELECT date(timestamp) as day, correct_count, duration_seconds
+        SELECT date(timestamp) as day, correct_count, error_count, duration_seconds
         FROM records
         WHERE username = ? AND date(timestamp) >= ?
         ORDER BY timestamp ASC
@@ -213,17 +206,16 @@ async def get_daily_stats(username: str, days: int = 7):
     rows = cursor.fetchall()
     conn.close()
 
-    # 按日期分組：每天有一個 list 存放各次運動的 correct_count
     from collections import OrderedDict
     daily = OrderedDict()
     for i in range(days):
         d = start_date + timedelta(days=i)
         daily[d.strftime('%m/%d')] = []
 
-    for day_str, correct, duration in rows:
+    for day_str, correct, error, duration in rows:
         label = datetime.strptime(day_str, '%Y-%m-%d').strftime('%m/%d')
         if label in daily:
-            daily[label].append({"correct": correct, "duration": duration})
+            daily[label].append({"correct": correct, "error": error or 0, "duration": duration})
 
     dates = list(daily.keys())
     sessions = list(daily.values())

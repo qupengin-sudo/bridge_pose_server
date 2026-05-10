@@ -9,6 +9,7 @@ import os
 from enum import Enum, auto
 import tkinter as tk
 from tkinter import font as tkfont
+import pygame
 
 # ── Load config ───────────────────────────────────────────────────────────────
 _config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -19,6 +20,13 @@ DEVICE_ID      = CONFIG["DEVICE_ID"]
 STAGE1_MIN     = CONFIG["STAGE1_MIN"]
 STAGE1_MAX     = CONFIG["STAGE1_MAX"]
 STAGE2_MAX     = CONFIG["STAGE2_MAX"]
+HOLD_TIME      = CONFIG.get("HOLD_TIME", 1.0)
+
+# ── Sound effects ─────────────────────────────────────────────────────────────
+_base_dir = os.path.dirname(os.path.abspath(__file__))
+pygame.mixer.init()
+SFX_CORRECT   = pygame.mixer.Sound(os.path.join(_base_dir, "audio", "correct.mp3"))
+SFX_INCORRECT = pygame.mixer.Sound(os.path.join(_base_dir, "audio", "incorrect.mp3"))
 
 # ── Primary monitor detection ─────────────────────────────────────────────────
 def get_primary_monitor():
@@ -193,21 +201,23 @@ def ask_duration():
 
 def open_bridge_app():
     # ── Result dialog ─────────────────────────────────────────────────────────────
-    def show_result_dialog(count: int, total_secs: int):
+    def show_result_dialog(count: int, wrong: int, total_secs: int):
         mins = total_secs // 60
+        total = count + wrong
+        rate = (count / total * 100) if total > 0 else 0.0
 
         root = tk.Tk()
         root.title("訓練結果 / Result")
         root.resizable(False, False)
 
-        # ── Shared palette (same as picker) ───────────────────────────────────────
         BG       = "#1e1e2e"
-        ACCENT   = "#89b4fa"   # pastel blue
+        ACCENT   = "#89b4fa"
         BTN_BG   = "#313244"
         BTN_HOV  = "#45475a"
-        TITLE_FG = "#cba6f7"   # mauve
+        TITLE_FG = "#cba6f7"
         TEXT_FG  = "#cdd6f4"
-        GREEN_FG = "#a6e3a1"   # green for the big count
+        GREEN_FG = "#a6e3a1"
+        RED_FG   = "#f38ba8"
         MUTED    = "#6c7086"
 
         root.configure(bg=BG)
@@ -217,22 +227,26 @@ def open_bridge_app():
         count_font  = tkfont.Font(family="Helvetica", size=52, weight="bold")
         label_font  = tkfont.Font(family="Helvetica", size=10)
         btn_font    = tkfont.Font(family="Helvetica", size=14, weight="bold")
+        stat_font   = tkfont.Font(family="Helvetica", size=13)
 
-        # ── Title ─────────────────────────────────────────────────────────────────
         tk.Label(root, text="🏆 訓練完成！", font=title_font,
                 bg=BG, fg=TITLE_FG, pady=16).pack()
 
-        # ── Big rep counter ────────────────────────────────────────────────────────
         tk.Label(root, text=str(count), font=count_font,
                 bg=BG, fg=GREEN_FG).pack(pady=(0, 4))
 
         tk.Label(root, text="次橋式 / bridge reps", font=sub_font,
                 bg=BG, fg=TEXT_FG).pack()
 
-        # ── Divider ───────────────────────────────────────────────────────────────
         tk.Frame(root, bg=BTN_BG, height=1).pack(fill="x", padx=30, pady=16)
 
-        # ── Duration line ─────────────────────────────────────────────────────────
+        stat_frame = tk.Frame(root, bg=BG)
+        stat_frame.pack(pady=(0, 8))
+        tk.Label(stat_frame, text=f"錯誤次數：{wrong}", font=stat_font,
+                bg=BG, fg=RED_FG).pack()
+        tk.Label(stat_frame, text=f"成功率：{rate:.1f}% ({count}/{total})", font=stat_font,
+                bg=BG, fg=TEXT_FG).pack()
+
         tk.Label(root,
                 text=f"訓練時間 {mins} 分鐘  /  Session: {mins} minute(s)",
                 font=label_font, bg=BG, fg=MUTED).pack(pady=(0, 20))
@@ -355,15 +369,20 @@ def open_bridge_app():
 
     # ── FSM / counter / timer state ────────────────────────────────────────────────
     state            = State.INIT
-    bridge_count     = 0            # how many times the user entered STAGE1
-    timer_started    = False        # True after first STAGE1 entry
-    timer_start_time = 0.0        # wall-clock time when timer began
-    finished         = False        # True when countdown hits 0
+    bridge_count     = 0
+    wrong_count      = 0
+    timer_started    = False
+    timer_start_time = 0.0
+    finished         = False
+    reached_stage1   = False
+
+    pending_state    = None
+    pending_since    = 0.0
 
     timestamp = 0   # MediaPipe video timestamp (integer, increments each frame)
 
     # ── Mini sub-window geometry ───────────────────────────────────────────────────
-    MINI_W, MINI_H = 230, 290
+    MINI_W, MINI_H = 230, 310
     MINI_X, MINI_Y = 10,  10
 
 
@@ -434,34 +453,96 @@ def open_bridge_app():
             if remaining <= 0:
                 finished = True
 
-        # ── FSM transitions ────────────────────────────────────────────────────────
+        # ── Determine detected stage from angles ──────────────────────────────────
+        if in_bridge:
+            detected = State.STAGE1
+        elif in_transition:
+            detected = State.TRANSITION
+        else:
+            detected = State.STAGE2
+
+        # ── FSM transitions (with hold-time) ──────────────────────────────────────
         if not finished:
             if state == State.INIT:
-                if in_bridge:
-                    state = State.STAGE1
-                    if not timer_started:
-                        timer_started    = True
-                        timer_start_time = now
+                if detected == State.STAGE1:
+                    if pending_state != State.STAGE1:
+                        pending_state = State.STAGE1
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.STAGE1
+                        reached_stage1 = True
+                        pending_state = None
+                        if not timer_started:
+                            timer_started    = True
+                            timer_start_time = now
+                else:
+                    pending_state = None
 
             elif state == State.STAGE1:
-                if in_transition:
-                    state = State.TRANSITION
-                elif not in_bridge and not in_transition:
-                    state        = State.STAGE2
-                    bridge_count += 1
+                if detected == State.TRANSITION:
+                    if pending_state != State.TRANSITION:
+                        pending_state = State.TRANSITION
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.TRANSITION
+                        pending_state = None
+                elif detected == State.STAGE2:
+                    if pending_state != State.STAGE2:
+                        pending_state = State.STAGE2
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.STAGE2
+                        bridge_count += 1
+                        SFX_CORRECT.play()
+                        reached_stage1 = False
+                        pending_state = None
+                else:
+                    pending_state = None
 
             elif state == State.TRANSITION:
-                if in_bridge:
-                    state = State.STAGE1
-                elif not in_transition:
-                    state        = State.STAGE2
-                    bridge_count += 1
+                if detected == State.STAGE1:
+                    if pending_state != State.STAGE1:
+                        pending_state = State.STAGE1
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.STAGE1
+                        reached_stage1 = True
+                        pending_state = None
+                elif detected == State.STAGE2:
+                    if pending_state != State.STAGE2:
+                        pending_state = State.STAGE2
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.STAGE2
+                        if reached_stage1:
+                            bridge_count += 1
+                            SFX_CORRECT.play()
+                        else:
+                            wrong_count += 1
+                            SFX_INCORRECT.play()
+                        reached_stage1 = False
+                        pending_state = None
+                else:
+                    pending_state = None
 
             elif state == State.STAGE2:
-                if in_transition:
-                    state = State.TRANSITION
-                elif in_bridge:
-                    state = State.STAGE1
+                if detected == State.TRANSITION:
+                    if pending_state != State.TRANSITION:
+                        pending_state = State.TRANSITION
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.TRANSITION
+                        pending_state = None
+                elif detected == State.STAGE1:
+                    if pending_state != State.STAGE1:
+                        pending_state = State.STAGE1
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.STAGE1
+                        reached_stage1 = True
+                        pending_state = None
+                else:
+                    pending_state = None
 
         color = STATE_COLOR[state]
 
@@ -552,11 +633,16 @@ def open_bridge_app():
         cv2.putText(mini, f"Stage: {state.name}",
                     (6, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
-        cv2.putText(mini, f"Count: {bridge_count}",
+        total = bridge_count + wrong_count
+        rate = (bridge_count / total * 100) if total > 0 else 0.0
+        cv2.putText(mini, f"OK:{bridge_count} NG:{wrong_count}",
                     (6, 46),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)   # cyan, bold
-        cv2.putText(mini, f"KHS: {int(a_khs)}",
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2)
+        cv2.putText(mini, f"Rate:{rate:.0f}% ({bridge_count}/{total})",
                     (6, 68),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1)
+        cv2.putText(mini, f"KHS: {int(a_khs)}",
+                    (6, 88),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         # ── MIDDLE SECTION: Pose sketch ────────────────────────────────────────────
@@ -564,7 +650,7 @@ def open_bridge_app():
             shoulder, hip, knee, ankle = points
 
             SKETCH_BOTTOM_Y  = MINI_H - 40   # bottom of sketch area
-            SKETCH_TOP_CLIP  = 60            # don't draw above this y in mini
+            SKETCH_TOP_CLIP  = 95            # don't draw above this y in mini
 
             FIX_FOOT     = np.array([MINI_W // 4,     SKETCH_BOTTOM_Y], dtype=float)
             FIX_SHOULDER = np.array([MINI_W * 3 // 4, SKETCH_BOTTOM_Y], dtype=float)
@@ -668,8 +754,8 @@ def open_bridge_app():
         if finished:
             cap.release()
             cv2.destroyAllWindows()
-            show_result_dialog(bridge_count, COUNTDOWN_SEC)
-            return COUNTDOWN_SEC, bridge_count
+            show_result_dialog(bridge_count, wrong_count, COUNTDOWN_SEC)
+            return COUNTDOWN_SEC, bridge_count, wrong_count
 
         # Check if user pressed 'q' OR closed the window via the X button
         key = cv2.waitKey(1) & 0xFF
@@ -684,11 +770,11 @@ def open_bridge_app():
                 actual_secs = 0
             cap.release()
             cv2.destroyAllWindows()
-            if bridge_count > 0:
-                show_result_dialog(bridge_count, actual_secs)
+            if bridge_count > 0 or wrong_count > 0:
+                show_result_dialog(bridge_count, wrong_count, actual_secs)
             else:
                 show_error_dialog()
-            return actual_secs, bridge_count
+            return actual_secs, bridge_count, wrong_count
 
 # 測試
 # if __name__ == "__main__":
