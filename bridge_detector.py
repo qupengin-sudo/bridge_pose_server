@@ -566,6 +566,17 @@ def open_bridge_app():
                             SFX_INCORRECT.play()
                         reached_stage1 = False
                         pending_state = None
+                elif detected == State.OVER:
+                    # Overextension from TRANSITION
+                    if pending_state != State.OVER:
+                        pending_state = State.OVER
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.OVER
+                        wrong_count += 1
+                        SFX_INCORRECT.play()
+                        reached_stage1 = False
+                        pending_state = None
                 else:
                     pending_state = None
 
@@ -588,6 +599,17 @@ def open_bridge_app():
                         SFX_INCORRECT.play()
                         last_event = "TOO FAST"
                         last_event_time = now
+                        reached_stage1 = False
+                        pending_state = None
+                elif detected == State.OVER:
+                    # Rapid overextension from resting
+                    if pending_state != State.OVER:
+                        pending_state = State.OVER
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.OVER
+                        wrong_count += 1
+                        SFX_INCORRECT.play()
                         reached_stage1 = False
                         pending_state = None
                 else:
