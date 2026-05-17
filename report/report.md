@@ -705,7 +705,9 @@ def init_all_tables():
 | correct_count | INTEGER | — | 該次訓練的正確橋式次數 |
 | error_count | INTEGER | — | 該次訓練的錯誤次數（動作未達 STAGE1 標準即放下的次數） |
 | duration_seconds | INTEGER | — | 訓練時長，單位為秒。若使用者提前結束，此值為實際經過時間而非設定的倒數時間 |
-| timestamp | DATETIME | DEFAULT CURRENT_TIMESTAMP | 紀錄建立時間，由 SQLite 自動填入。格式為 `YYYY-MM-DD HH:MM:SS`，時區為 UTC |
+| timestamp | DATETIME | DEFAULT CURRENT_TIMESTAMP | 紀錄建立時間，由 SQLite 自動填入。格式為 `YYYY-MM-DD HH:MM:SS`，時區為 UTC。查詢時需以 `date(timestamp, '+8 hours')` 轉為台灣時區 |
+
+> **時區處理策略**：資料庫統一以 UTC 儲存時間戳記，查詢端依需求轉換。前端顯示個別紀錄時在 timestamp 後加 `'Z'` 後綴再以 `toLocaleString()` 轉為瀏覽器本地時區；後端做日期分組（每日統計 API）與日期篩選（搜尋 API）時則以 SQLite 的 `date(timestamp, '+8 hours')` 將 UTC 轉為台灣時間再比較，確保跨日紀錄歸入正確日期。
 
 ## 4.4 後端伺服器實作（app.py）
 
@@ -813,9 +815,17 @@ GET /get_daily_stats/{username}?days=7
 處理邏輯：
 1. 將 `days` 限制在 1–50 範圍內。
 2. 計算起始日期 `start_date = today - timedelta(days=days-1)`。
-3. 查詢 `records` 表中該使用者從 start_date 至今的所有紀錄，按 `timestamp` 升序排列。
+3. 查詢 `records` 表中該使用者從 start_date 至今的所有紀錄，按 `timestamp` 升序排列。SQL 中使用 `date(timestamp, '+8 hours')` 將 UTC 時間轉換為台灣時區（UTC+8）後再進行日期分組與篩選——因為 SQLite 儲存的 timestamp 為 UTC 時間，若直接以 `date(timestamp)` 擷取日期，會導致台灣時間跨日的紀錄被歸入錯誤的日期（例如台灣時間 2026-05-13 06:00 對應 UTC 2026-05-12 22:00，若不轉換會被歸入 5/12 而非 5/13）。
 4. 以 `OrderedDict` 建立日期索引，確保即使某日無紀錄也會出現在結果中（空陣列）。
 5. 將查詢結果按日期分組，每日為一個陣列，陣列中的每個元素為 `{"correct": N, "error": M, "duration": S}`。
+
+關鍵 SQL：
+```sql
+SELECT date(timestamp, '+8 hours') as day, correct_count, error_count, duration_seconds
+FROM records
+WHERE username = ? AND date(timestamp, '+8 hours') >= ?
+ORDER BY timestamp ASC
+```
 
 回應格式：
 ```json
@@ -865,7 +875,7 @@ GET /search_records/{username}?date_from=2026-05-01&date_to=2026-05-10&duration_
 - `duration_op`：運動時長比較方式，可為 `eq`（等於）、`lte`（小於等於）、`gte`（大於等於）。
 - `duration_val`：運動時長閾值（單位：秒）。注意前端傳入的是秒數（已將分鐘乘以 60）。
 
-處理邏輯：動態組合 SQL WHERE 條件，使用參數化查詢。回應格式與全部紀錄 API 相同。
+處理邏輯：動態組合 SQL WHERE 條件，使用參數化查詢。日期篩選同樣使用 `date(timestamp, '+8 hours')` 進行 UTC→台灣時區轉換後再比較，確保使用者在前端選擇的日期範圍與其實際體感時間一致（例如使用者搜尋 5/1~5/12 的紀錄，不會因 UTC 時差而錯誤包含台灣時間 5/13 凌晨的紀錄）。回應格式與全部紀錄 API 相同。
 
 ## 4.5 姿態偵測核心實作（bridge_detector.py）
 
