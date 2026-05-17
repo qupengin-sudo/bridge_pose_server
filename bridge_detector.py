@@ -20,6 +20,7 @@ DEVICE_ID      = CONFIG["DEVICE_ID"]
 STAGE1_MIN     = CONFIG["STAGE1_MIN"]
 STAGE1_MAX     = CONFIG["STAGE1_MAX"]
 STAGE2_MAX     = CONFIG["STAGE2_MAX"]
+STAGE2_MIN     = CONFIG.get("STAGE2_MIN", 95)
 HOLD_TIME      = CONFIG.get("HOLD_TIME", 1.0)
 
 # ── Sound effects ─────────────────────────────────────────────────────────────
@@ -48,9 +49,10 @@ def get_primary_monitor():
 # ── States ────────────────────────────────────────────────────────────────────
 class State(Enum):
     INIT       = auto()   # waiting for first bridge pose
-    STAGE1     = auto()   # in bridge pose  (hips lifted, angle 140–180°)
-    TRANSITION = auto()   # mid-stage (hips partially raised, angle 100–139°)
-    STAGE2     = auto()   # resting between reps (angle < 100°)
+    STAGE1     = auto()   # in bridge pose  (hips lifted, angle 155–180°)
+    TRANSITION = auto()   # mid-stage (hips partially raised, angle 131–154°)
+    STAGE2     = auto()   # resting between reps (angle 95–130°)
+    OVER       = auto()   # overextension (angle > 180°)
 
 
 # ── Angle helper ───────────────────────────────────────────────────────────────
@@ -66,25 +68,41 @@ def calculate_angle(a, b, c):
 # ── Bridge-pose detection ──────────────────────────────────────────────────────
 def detect_bridge(shoulder, hip, knee, ankle):
     """
-    Returns (in_bridge, in_transition, a_khs, a_fkh, a_kfs).
-    in_bridge:     knee-hip-shoulder angle in [BRIDGE_MIN, BRIDGE_MAX]  (140–180°)
-    in_transition: angle in [TRANSITION_MIN, TRANSITION_MAX]            (100–139°)
+    Returns (in_bridge, in_transition, in_over, a_khs, a_fkh, a_kfs).
+    Uses signed angle via cross product — allows a_khs > 180° for overextension.
     """
-    a_khs = calculate_angle(knee,  hip,   shoulder)   # main bridge angle
-    a_fkh = calculate_angle(ankle, knee,  hip)         # leg bend reference
-    a_kfs = calculate_angle(knee,  ankle, shoulder)    # foot-reference
+    # Interior angle via arccos (always 0-180)
+    a_khs = calculate_angle(knee, hip, shoulder)
+
+    # Signed angle: cross product to detect overextension (hip above knee-shoulder line)
+    hk = np.array(knee) - np.array(hip)
+    hs = np.array(shoulder) - np.array(hip)
+    cross = hk[0] * hs[1] - hk[1] * hs[0]
+
+    # Cross product sign flips depending on facing direction
+    facing_right = shoulder[0] > knee[0]
+    overextended = (cross < 0) if facing_right else (cross > 0)
+    if overextended:
+        a_khs = 360.0 - a_khs
+
+    a_fkh = calculate_angle(ankle, knee, hip)       # leg bend reference
+    a_kfs = calculate_angle(knee, ankle, shoulder)   # foot-reference
+
     in_bridge     = STAGE1_MIN <= a_khs <= STAGE1_MAX
     in_transition = STAGE2_MAX < a_khs < STAGE1_MIN
-    return in_bridge, in_transition, a_khs, a_fkh, a_kfs
+    in_over       = a_khs > STAGE1_MAX
+    return in_bridge, in_transition, in_over, a_khs, a_fkh, a_kfs
 
 
 # ── Colour per state ──────────────────────────────────────────────────────────
 STATE_COLOR = {
     State.INIT:       (200, 200, 200),   # grey
     State.STAGE1:     (0,   255,   0),   # green  – full bridge
-    State.TRANSITION: (0,     0, 255),   # red    – mid-stage
-    State.STAGE2:     (0,   165, 255),   # orange – resting
+    State.TRANSITION: (0,   165, 255),   # orange – mid-stage
+    State.STAGE2:     (255, 255, 255),   # white  – resting
+    State.OVER:       (0,     0, 255),   # red    – overextension
 }
+INVALID_COLOR = (150, 150, 150)          # gray – no pose / invalid angle
 
 
 # ── Duration picker dialog ────────────────────────────────────────────────────
@@ -379,6 +397,9 @@ def open_bridge_app():
     pending_state    = None
     pending_since    = 0.0
 
+    last_event       = None    # "TOO FAST" or None
+    last_event_time  = 0.0     # timestamp when last_event was set
+
     timestamp = 0   # MediaPipe video timestamp (integer, increments each frame)
 
     # ── Mini sub-window geometry ───────────────────────────────────────────────────
@@ -443,9 +464,9 @@ def open_bridge_app():
         # ── Pose evaluation ────────────────────────────────────────────────────────
         if points:
             shoulder, hip, knee, ankle = points
-            in_bridge, in_transition, a_khs, a_fkh, a_kfs = detect_bridge(shoulder, hip, knee, ankle)
+            in_bridge, in_transition, in_over, a_khs, a_fkh, a_kfs = detect_bridge(shoulder, hip, knee, ankle)
         else:
-            in_bridge, in_transition, a_khs, a_fkh, a_kfs = False, False, 0.0, 0.0, 0.0
+            in_bridge, in_transition, in_over, a_khs, a_fkh, a_kfs = False, False, False, 0.0, 0.0, 0.0
 
         # ── Countdown check ────────────────────────────────────────────────────────
         if timer_started and not finished:
@@ -454,7 +475,12 @@ def open_bridge_app():
                 finished = True
 
         # ── Determine detected stage from angles ──────────────────────────────────
-        if in_bridge:
+        if points is None or a_khs < STAGE2_MIN:
+            # No pose detected or angle below minimum → invalid, freeze state
+            detected = None
+        elif in_over:
+            detected = State.OVER
+        elif in_bridge:
             detected = State.STAGE1
         elif in_transition:
             detected = State.TRANSITION
@@ -463,7 +489,10 @@ def open_bridge_app():
 
         # ── FSM transitions (with hold-time) ──────────────────────────────────────
         if not finished:
-            if state == State.INIT:
+            # Invalid / no-pose → freeze state, reset hold timer
+            if detected is None:
+                pending_state = None
+            elif state == State.INIT:
                 if detected == State.STAGE1:
                     if pending_state != State.STAGE1:
                         pending_state = State.STAGE1
@@ -487,13 +516,27 @@ def open_bridge_app():
                         state = State.TRANSITION
                         pending_state = None
                 elif detected == State.STAGE2:
+                    # Skipped TRANSITION → TOO FAST
                     if pending_state != State.STAGE2:
                         pending_state = State.STAGE2
                         pending_since = now
                     elif now - pending_since >= HOLD_TIME:
                         state = State.STAGE2
-                        bridge_count += 1
-                        SFX_CORRECT.play()
+                        wrong_count += 1
+                        SFX_INCORRECT.play()
+                        last_event = "TOO FAST"
+                        last_event_time = now
+                        reached_stage1 = False
+                        pending_state = None
+                elif detected == State.OVER:
+                    # Overextension
+                    if pending_state != State.OVER:
+                        pending_state = State.OVER
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.OVER
+                        wrong_count += 1
+                        SFX_INCORRECT.play()
                         reached_stage1 = False
                         pending_state = None
                 else:
@@ -518,6 +561,7 @@ def open_bridge_app():
                             bridge_count += 1
                             SFX_CORRECT.play()
                         else:
+                            # Didn't reach STAGE1 (went up but came back)
                             wrong_count += 1
                             SFX_INCORRECT.play()
                         reached_stage1 = False
@@ -534,17 +578,39 @@ def open_bridge_app():
                         state = State.TRANSITION
                         pending_state = None
                 elif detected == State.STAGE1:
+                    # Skipped TRANSITION → TOO FAST
                     if pending_state != State.STAGE1:
                         pending_state = State.STAGE1
                         pending_since = now
                     elif now - pending_since >= HOLD_TIME:
                         state = State.STAGE1
+                        wrong_count += 1
+                        SFX_INCORRECT.play()
+                        last_event = "TOO FAST"
+                        last_event_time = now
                         reached_stage1 = True
                         pending_state = None
                 else:
                     pending_state = None
 
-        color = STATE_COLOR[state]
+            elif state == State.OVER:
+                # OVER is locked — only STAGE2 can exit it
+                if detected == State.STAGE2:
+                    if pending_state != State.STAGE2:
+                        pending_state = State.STAGE2
+                        pending_since = now
+                    elif now - pending_since >= HOLD_TIME:
+                        state = State.STAGE2
+                        reached_stage1 = False
+                        pending_state = None
+                else:
+                    pending_state = None
+
+        # Use gray for invalid frames (no pose / angle below minimum)
+        if detected is None:
+            color = INVALID_COLOR
+        else:
+            color = STATE_COLOR[state]
 
         # ── Draw skeleton on main frame ────────────────────────────────────────────
         if points:
@@ -644,6 +710,14 @@ def open_bridge_app():
         cv2.putText(mini, f"KHS: {int(a_khs)}",
                     (6, 88),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        # ── TOO FAST flash (display for 2 seconds) ────────────────────────────────
+        if last_event and (now - last_event_time) < 2.0:
+            cv2.putText(mini, last_event,
+                        (50, MINI_H // 2 - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        elif last_event and (now - last_event_time) >= 2.0:
+            last_event = None
 
         # ── MIDDLE SECTION: Pose sketch ────────────────────────────────────────────
         if points:

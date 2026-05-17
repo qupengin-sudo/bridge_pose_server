@@ -1,7 +1,8 @@
 {
-    "DEVICE_ID": 0,
+    "DEVICE_ID": 2,
     "STAGE1_MIN": 155,
-    "STAGE1_MAX": 180,
+    "STAGE1_MAX": 185,
     "STAGE2_MAX": 130,
-    "HOLD_TIME": 0.8
+    "STAGE2_MIN": 95,
+    "HOLD_TIME": 0.5
 }
