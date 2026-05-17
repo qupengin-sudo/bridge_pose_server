@@ -578,17 +578,17 @@ def open_bridge_app():
                         state = State.TRANSITION
                         pending_state = None
                 elif detected == State.STAGE1:
-                    # Skipped TRANSITION → TOO FAST
+                    # Skipped TRANSITION → TOO FAST → lock like OVER, only STAGE2 exits
                     if pending_state != State.STAGE1:
                         pending_state = State.STAGE1
                         pending_since = now
                     elif now - pending_since >= HOLD_TIME:
-                        state = State.STAGE1
+                        state = State.OVER
                         wrong_count += 1
                         SFX_INCORRECT.play()
                         last_event = "TOO FAST"
                         last_event_time = now
-                        reached_stage1 = True
+                        reached_stage1 = False
                         pending_state = None
                 else:
                     pending_state = None
