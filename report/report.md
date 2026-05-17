@@ -14,7 +14,7 @@
 
 - 即時偵測橋式動作：透過攝影機擷取畫面，利用姿態辨識模型標記人體關鍵點，計算關節角度以判斷橋式動作階段。
 
-- 自動計數與計時：以五狀態有限狀態機（INIT、STAGE1、TRANSITION、STAGE2、OVER）管理動作階段轉換，當使用者完成一次完整的「抬臀→過渡→放下」循環即自動累計正確次數；系統可辨識四種錯誤：動作不完整（未達 STAGE1 即放下）、動作過快（跳過 TRANSITION 階段）、以及過度伸展（臀部抬過高），各自累計錯誤次數。同時支援使用者自訂訓練時間。
+- 自動計數與計時：以五狀態有限狀態機（INIT、STAGE1、TRANSITION、STAGE2、OVER）管理動作階段轉換，當使用者完成一次完整的「抬臀→過渡→放下」循環即自動累計正確次數；系統可辨識五種錯誤：動作不完整（未達 STAGE1 即放下）、下行不完整（未回到 STAGE2 即再次抬起）、動作過快（跳過 TRANSITION 階段）、以及過度伸展（臀部抬過高），各自累計錯誤次數。同時支援使用者自訂訓練時間。
 
 - 音效回饋：動作完成時播放正確音效，動作不合格時播放錯誤音效，讓使用者在運動中無需注視螢幕也能即時得知動作是否正確。動作過快時畫面另顯示「TOO FAST」紅色警告文字。
 
@@ -54,7 +54,7 @@
 
 ### 1.3.4 錯誤動作判定機制
 
-系統可辨識以下四種錯誤情境，每種皆會使 `wrong_count` 加 1 並播放 `incorrect.mp3` 音效：
+系統可辨識以下五種錯誤情境，每種皆會使 `wrong_count` 加 1 並播放 `incorrect.mp3` 音效：
 
 **（一）動作不完整——未達 STAGE1 即放下**
 
@@ -62,23 +62,31 @@
 
 判定路徑：`STAGE2 → TRANSITION → STAGE2`（未經過 STAGE1）
 
-**（二）動作過快——跳過 TRANSITION（下行方向）**
+**（二）下行不完整——未回到 STAGE2 即再次抬起**
+
+使用者完成一次橋式後（STAGE1），臀部僅下降至 TRANSITION 區間（131°–154°）便再次抬起回到 STAGE1，未完全放下至 STAGE2（≤130°）。系統檢測到 TRANSITION → STAGE1 轉換時 `reached_stage1 = True`（代表之前已經到過 STAGE1），判定為不完整的下行動作，狀態鎖入 OVER。資訊面板顯示「Please rest」提示使用者將臀部完全放下。
+
+判定路徑：`STAGE1 → TRANSITION → STAGE1`（`reached_stage1 = True`，未回到 STAGE2）
+
+**（三）動作過快——跳過 TRANSITION（下行方向）**
 
 使用者在 STAGE1 後急速放下臀部，角度從 ≥155° 直接跌落至 ≤130°，跳過了 131°–154° 的 TRANSITION 區間。系統偵測到 STAGE1 → STAGE2 的直接轉換（未經過 TRANSITION），判定為「TOO FAST」錯誤。資訊面板同時閃爍紅色「TOO FAST」文字 2 秒。
 
 判定路徑：`STAGE1 → STAGE2`（跳過 TRANSITION）
 
-**（三）動作過快——跳過 TRANSITION（上行方向）**
+**（四）動作過快——跳過 TRANSITION（上行方向）**
 
-使用者在 STAGE2 後急速抬起臀部，角度從 ≤130° 直接躍升至 ≥155°，跳過了 TRANSITION 區間。系統偵測到 STAGE2 → STAGE1 的直接轉換（未經過 TRANSITION），判定為「TOO FAST」錯誤。資訊面板閃爍紅色「TOO FAST」文字 2 秒。
+使用者在 STAGE2 後急速抬起臀部，角度從 ≤130° 直接躍升至 ≥155°，跳過了 TRANSITION 區間。系統偵測到 STAGE2 → STAGE1 的直接轉換（未經過 TRANSITION），判定為「TOO FAST」錯誤，狀態鎖入 OVER（而非 STAGE1），資訊面板閃爍紅色「TOO FAST」文字 2 秒並顯示「Please rest」。使用者必須完全放下臀部至 STAGE2 方可繼續。
 
-判定路徑：`STAGE2 → STAGE1`（跳過 TRANSITION）
+判定路徑：`STAGE2 → STAGE1`（跳過 TRANSITION）→ 鎖入 OVER
 
-**（四）過度伸展（Overextension）**
+**（五）過度伸展（Overextension）**
 
-使用者在 STAGE1 時臀部抬得過高，導致髖部高於膝蓋與肩膀的連線，角度經有號角度計算超過 STAGE1_MAX（預設 190°）。系統偵測到過度伸展，狀態轉入 OVER（紅色），`wrong_count` 加 1。OVER 狀態為鎖定狀態——使用者必須將臀部完全放下回到 STAGE2（角度 ≤130° 且持續 HOLD_TIME 秒）方可解除鎖定，重新開始下一次動作循環。
+使用者臀部抬得過高，導致髖部高於膝蓋與肩膀的連線，角度經有號角度計算超過 STAGE1_MAX（預設 190°）。過度伸展可從 STAGE1、TRANSITION 或 STAGE2 任一狀態觸發——無論使用者當前處於何種階段，只要角度持續超過 190° 達 HOLD_TIME 秒，狀態即轉入 OVER（紅色），`wrong_count` 加 1。OVER 狀態為鎖定狀態——使用者必須將臀部完全放下回到 STAGE2（角度 ≤130° 且持續 HOLD_TIME 秒）方可解除鎖定，重新開始下一次動作循環。資訊面板持續顯示「Please rest」提示。
 
-判定路徑：`STAGE1 → OVER`（角度 > 190°）
+判定路徑：`STAGE1 / TRANSITION / STAGE2 → OVER`（角度 > 190°）
+
+**所有錯誤皆鎖入 OVER 狀態**：上述五種錯誤情境中，除了（一）動作不完整以外，其餘四種皆會使 FSM 進入 OVER 鎖定狀態。OVER 狀態下資訊面板持續以橙黃色文字顯示「Please rest」，提醒使用者將臀部完全放下至 STAGE2 後方可繼續訓練。此設計確保使用者在每次錯誤後必須回到完全休息位置，重新調整姿勢再開始下一次動作。
 
 ### 1.3.5 有號角度與朝向修正機制
 
@@ -511,20 +519,28 @@ class State(Enum):
 
 **STAGE1 → OVER**（過度伸展）：當角度偵測結果為 OVER 且持續達到 HOLD_TIME 秒。轉換時 `wrong_count += 1`，播放 `SFX_INCORRECT.play()`，重設 `reached_stage1 = False`。
 
-**TRANSITION → STAGE1**（上行確認）：當角度偵測結果為 STAGE1 且持續達到 HOLD_TIME 秒。轉換時設定 `reached_stage1 = True`。
+**TRANSITION → STAGE1**（條件分支）：當角度偵測結果為 STAGE1 且持續達到 HOLD_TIME 秒。轉換行為依 `reached_stage1` 的值分為兩種情況：
+- 若 `reached_stage1 = False`（使用者從 STAGE2 上行經過 TRANSITION 到達 STAGE1，正常的上行路徑）：設定 `reached_stage1 = True`，狀態轉為 STAGE1。
+- 若 `reached_stage1 = True`（使用者從 STAGE1 下行至 TRANSITION 後又回到 STAGE1，代表臀部未完全放下即再次抬起）：判定為「下行不完整」錯誤，`wrong_count += 1`，播放 `SFX_INCORRECT.play()`，重設 `reached_stage1 = False`，狀態鎖入 OVER。
 
 **TRANSITION → STAGE2**（下行完成）：當角度偵測結果為 STAGE2 且持續達到 HOLD_TIME 秒。轉換時檢查 `reached_stage1`：
 - 若為 True（本次循環曾到達 STAGE1）：`bridge_count += 1`，播放 `SFX_CORRECT.play()`。此為正確的橋式動作。
 - 若為 False（本次循環未曾到達 STAGE1，即使用者臀部未充分抬起即放下）：`wrong_count += 1`，播放 `SFX_INCORRECT.play()`。此為不完整的動作。
 - 兩種情況皆重設 `reached_stage1 = False`。
 
+**TRANSITION → OVER**（過度伸展）：當角度偵測結果為 OVER 且持續達到 HOLD_TIME 秒。轉換時 `wrong_count += 1`，播放 `SFX_INCORRECT.play()`，重設 `reached_stage1 = False`。過度伸展可從 TRANSITION 狀態直接觸發。
+
 **STAGE2 → TRANSITION**（正常上行）：當角度偵測結果為 TRANSITION 且持續達到 HOLD_TIME 秒。開始新的動作循環。
 
-**STAGE2 → STAGE1**（跳過 TRANSITION，TOO FAST）：當角度偵測結果直接為 STAGE1（跳過 TRANSITION）且持續達到 HOLD_TIME 秒。轉換時 `wrong_count += 1`，播放 `SFX_INCORRECT.play()`，設定 `last_event = "TOO FAST"`，同時設定 `reached_stage1 = True`（因為確實到達了 STAGE1）。
+**STAGE2 → OVER**（跳過 TRANSITION，TOO FAST，鎖入 OVER）：當角度偵測結果直接為 STAGE1（跳過 TRANSITION）且持續達到 HOLD_TIME 秒。轉換時狀態直接進入 OVER（而非 STAGE1），`wrong_count += 1`，播放 `SFX_INCORRECT.play()`，設定 `last_event = "TOO FAST"`，重設 `reached_stage1 = False`。此設計確保動作過快的使用者必須先回到完全休息位置再繼續。
 
-**OVER → STAGE2**（唯一出口）：OVER 為鎖定狀態，僅當角度偵測結果為 STAGE2 且持續達到 HOLD_TIME 秒時方可離開。轉換時重設 `reached_stage1 = False`。OVER 狀態不接受任何其他轉換目標——即使角度回到 STAGE1 或 TRANSITION 範圍也不會觸發轉換，使用者必須將臀部完全放下。
+**STAGE2 → OVER**（過度伸展）：當角度偵測結果為 OVER 且持續達到 HOLD_TIME 秒。即使使用者剛從休息位置急速過度伸展，系統也能正確偵測並鎖入 OVER。轉換時 `wrong_count += 1`，播放 `SFX_INCORRECT.play()`，重設 `reached_stage1 = False`。
 
-**TRANSITION 為強制經過的階段**：系統要求所有上行（STAGE2→STAGE1）與下行（STAGE1→STAGE2）路徑皆必須經過 TRANSITION 階段。若角度變化過快跳過了 TRANSITION，系統判定為「TOO FAST」錯誤。此設計的目的是確保使用者以適當的速度進行動作，避免靠慣性甩動完成橋式。
+**OVER → STAGE2**（唯一出口）：OVER 為鎖定狀態，僅當角度偵測結果為 STAGE2 且持續達到 HOLD_TIME 秒時方可離開。轉換時重設 `reached_stage1 = False`。OVER 狀態不接受任何其他轉換目標——即使角度回到 STAGE1 或 TRANSITION 範圍也不會觸發轉換，使用者必須將臀部完全放下。在 OVER 狀態期間，資訊面板持續以橙黃色文字顯示「Please rest」提示。
+
+**OVER 狀態的統一鎖定機制**：所有錯誤情境（TOO FAST 上行、TOO FAST 下行、下行不完整、過度伸展）皆會將 FSM 鎖入 OVER 狀態，唯一例外為「動作不完整」（TRANSITION → STAGE2 且 `reached_stage1 = False`），此錯誤直接進入 STAGE2 而非 OVER。OVER 狀態的「Please rest」提示為統一的復原提示，不分錯誤類型。
+
+**TRANSITION 為強制經過的階段**：系統要求所有上行（STAGE2→STAGE1）與下行（STAGE1→STAGE2）路徑皆必須經過 TRANSITION 階段。若角度變化過快跳過了 TRANSITION，系統判定為「TOO FAST」錯誤並鎖入 OVER。此設計的目的是確保使用者以適當的速度進行動作，避免靠慣性甩動完成橋式。
 
 **防抖機制（Hold Time）的詳細運作方式**：
 
@@ -996,6 +1012,8 @@ g. **FSM 轉換**：若 `finished` 為 False，根據當前 `state` 與 `detecte
 g2. **顏色決定**：若 `detected` 為 None，使用 `INVALID_COLOR`（灰色）；否則使用 `STATE_COLOR[state]`。
 
 g3. **TOO FAST 顯示**：若 `last_event` 不為 None 且距離 `last_event_time` 未超過 2 秒，在資訊面板中央以紅色繪製事件文字；超過 2 秒後自動清除 `last_event = None`。
+
+g4. **Recovery 提示**：若當前 `state == State.OVER`，在資訊面板中央以橙黃色 (0, 200, 255) 繪製「Please rest」文字（0.55 倍字體，粗體），提示使用者將臀部完全放下至 STAGE2 才能繼續訓練。此提示在 OVER 狀態期間持續顯示，不受 `last_event` 計時器影響。
 
 h. **骨架繪製**：若有有效的關鍵點，在影像上繪製：
    - 四個關節圓點（半徑 10px，填滿，顏色隨狀態變化）
