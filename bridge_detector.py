@@ -548,8 +548,16 @@ def open_bridge_app():
                         pending_state = State.STAGE1
                         pending_since = now
                     elif now - pending_since >= HOLD_TIME:
-                        state = State.STAGE1
-                        reached_stage1 = True
+                        if reached_stage1:
+                            # STAGE1 → TRANSITION → STAGE1: didn't lower hips enough
+                            state = State.OVER
+                            wrong_count += 1
+                            SFX_INCORRECT.play()
+                            reached_stage1 = False
+                        else:
+                            # STAGE2 → TRANSITION → STAGE1: normal ascent
+                            state = State.STAGE1
+                            reached_stage1 = True
                         pending_state = None
                 elif detected == State.STAGE2:
                     if pending_state != State.STAGE2:
@@ -740,6 +748,12 @@ def open_bridge_app():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         elif last_event and (now - last_event_time) >= 2.0:
             last_event = None
+
+        # ── Recovery hint: tell user to return to resting position ────────────
+        if state == State.OVER:
+            cv2.putText(mini, "Please rest",
+                        (6, MINI_H // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 2)
 
         # ── MIDDLE SECTION: Pose sketch ────────────────────────────────────────────
         if points:
