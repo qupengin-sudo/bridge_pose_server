@@ -195,11 +195,11 @@ async def get_daily_stats(username: str, days: int = 7):
     today = datetime.now().date()
     start_date = today - timedelta(days=days - 1)
 
-    # 抓取該區間內所有紀錄
+    # 抓取該區間內所有紀錄 (用 +8 hours 轉換為台灣時區)
     cursor.execute("""
-        SELECT date(timestamp) as day, correct_count, error_count, duration_seconds
+        SELECT date(timestamp, '+8 hours') as day, correct_count, error_count, duration_seconds
         FROM records
-        WHERE username = ? AND date(timestamp) >= ?
+        WHERE username = ? AND date(timestamp, '+8 hours') >= ?
         ORDER BY timestamp ASC
     """, (username, start_date.isoformat()))
 
@@ -279,10 +279,10 @@ async def search_records(username: str, date_from: str = "", date_to: str = "",
     params = [username]
 
     if date_from:
-        conditions.append("date(timestamp) >= ?")
+        conditions.append("date(timestamp, '+8 hours') >= ?")
         params.append(date_from)
     if date_to:
-        conditions.append("date(timestamp) <= ?")
+        conditions.append("date(timestamp, '+8 hours') <= ?")
         params.append(date_to)
     if duration_op and duration_val > 0:
         if duration_op == "eq":
